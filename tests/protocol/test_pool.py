@@ -62,6 +62,17 @@ class TestPoolModel:
         assert result["utilization_after"] > result["utilization_before"]
         assert result["borrow_rate_after"] > result["borrow_rate_before"]
 
+    def test_simulate_withdrawal_exceeding_supply(self, pool_model: PoolModel) -> None:
+        """Withdrawing more than total supply should clamp utilization to 1.0."""
+        result = pool_model.simulate_withdrawal(pool_model.state.total_supply + 1_000.0)
+        assert result["utilization_after"] == 1.0
+        assert result["utilization_after"] >= 0.0
+
+    def test_simulate_withdrawal_equal_to_supply(self, pool_model: PoolModel) -> None:
+        """Withdrawing exactly the total supply should yield utilization 1.0."""
+        result = pool_model.simulate_withdrawal(pool_model.state.total_supply)
+        assert result["utilization_after"] == 1.0
+
     def test_simulate_liquidation_impact(self, pool_model: PoolModel) -> None:
         result = pool_model.simulate_liquidation_impact(
             liquidated_debt=50_000.0,

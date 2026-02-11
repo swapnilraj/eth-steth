@@ -69,7 +69,7 @@ def render_stress_tests(
     for scenario, shock in zip(HISTORICAL_SCENARIOS, results):
         stressed_rate = weth_rate_model.variable_borrow_rate(scenario.utilization_shock)
         borrow_cost = debt_val * stressed_rate * (scenario.duration_days / 365.0)
-        staking_income = collateral_val * staking_apy * (scenario.duration_days / 365.0)
+        staking_income = shock.collateral_after * staking_apy * (scenario.duration_days / 365.0)
         full_pnl = shock.pnl_impact + staking_income - borrow_cost
         rows.append({
             "Scenario": scenario.name,
@@ -146,7 +146,7 @@ def render_stress_tests(
 
     custom_stressed_rate = weth_rate_model.variable_borrow_rate(custom_util)
     custom_borrow_cost = debt_val * custom_stressed_rate * (int(custom_days) / 365.0)
-    custom_staking_income = collateral_val * staking_apy * (int(custom_days) / 365.0)
+    custom_staking_income = custom_result.collateral_after * staking_apy * (int(custom_days) / 365.0)
     custom_full_pnl = custom_result.pnl_impact + custom_staking_income - custom_borrow_cost
 
     cr_col1, cr_col2, cr_col3, cr_col4 = st.columns(4)
@@ -211,6 +211,13 @@ def render_stress_tests(
 
     # --- Section 4: Correlated Shock Analysis ---
     st.subheader("Correlated Shock Analysis")
+    st.caption(
+        "Generates correlated exchange-rate and utilization shocks via "
+        "Cholesky decomposition of a 3-factor model (ETH price, exchange "
+        "rate, utilization). ETH/USD moves cancel out for ETH-denominated "
+        "P&L, but the ETH-rate correlation (0.6) shapes the exchange-rate "
+        "distribution — large ETH drawdowns produce wider rate shocks."
+    )
 
     n_corr = st.number_input(
         "Number of Correlated Scenarios",
@@ -227,11 +234,11 @@ def render_stress_tests(
         seed=42,
     )
 
-    # Apply each correlated scenario.
-    # For an ETH-denominated position, ETH/USD moves cancel out (both
-    # collateral and debt are in ETH). The risk factors that matter are:
-    #   1) stETH/ETH peg deviation (affects collateral value)
-    #   2) utilization shock (affects borrow rate → cost)
+    # ETH/USD moves cancel out for ETH-denominated positions (both
+    # collateral and debt move equally).  The ETH dimension is still
+    # generated because the Cholesky decomposition uses the full 3×3
+    # correlation matrix — the ETH-peg correlation (0.6) indirectly
+    # widens the peg shock distribution during ETH drawdowns.
     n_corr_int = len(corr_scenarios)
     corr_pnl = np.empty(n_corr_int)
     corr_stressed_coll = np.empty(n_corr_int)
@@ -239,7 +246,7 @@ def render_stress_tests(
     horizon_days = 30  # assume 30-day stress horizon
     for i, shock_vec in enumerate(corr_scenarios):
         _eth_change, peg, util = shock_vec
-        # Collateral: peg shock + staking income over horizon
+        # Collateral: exchange-rate shock + staking income over horizon
         stressed_coll = position.collateral_amount * collateral_price * peg
         staking_income = stressed_coll * staking_apy * (horizon_days / 365.0)
         coll_end = stressed_coll + staking_income

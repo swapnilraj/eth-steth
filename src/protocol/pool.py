@@ -82,8 +82,8 @@ class PoolModel:
         u_before = self.utilization
         r_borrow_before = self.borrow_rate
 
-        new_supply = self.state.total_supply - amount
-        u_after = self.state.total_debt / new_supply if new_supply > 0 else 0.0
+        new_supply = max(0.0, self.state.total_supply - amount)
+        u_after = min(1.0, self.state.total_debt / new_supply) if new_supply > 0 else 1.0
 
         return {
             "utilization_before": u_before,
