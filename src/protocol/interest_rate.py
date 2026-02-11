@@ -55,7 +55,9 @@ class InterestRateModel:
         """Compute supply (deposit) rate.
 
         R_supply = R_borrow * U * (1 - reserve_factor)
+        Utilization is clamped to [0, 1] to match variable_borrow_rate.
         """
+        utilization = max(0.0, min(1.0, utilization))
         borrow_rate = self.variable_borrow_rate(utilization)
         return borrow_rate * utilization * (1.0 - self.params.reserve_factor)
 

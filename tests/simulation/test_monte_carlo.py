@@ -75,13 +75,29 @@ class TestRunMonteCarlo:
             horizon_days=30,
             seed=42,
         )
-        assert mc.utilization_paths.shape == (50, 30)
-        assert mc.rate_paths.shape == (50, 30)
-        assert mc.pnl_paths.shape == (50, 30)
+        # n_steps = horizon_days + 1 (index 0 = initial, 1..30 = daily steps)
+        assert mc.utilization_paths.shape == (50, 31)
+        assert mc.rate_paths.shape == (50, 31)
+        assert mc.pnl_paths.shape == (50, 31)
         assert mc.terminal_pnl.shape == (50,)
         assert mc.liquidated.shape == (50,)
-        assert mc.hf_paths.shape == (50, 30)
-        assert mc.timesteps.shape == (30,)
+        assert mc.hf_paths.shape == (50, 31)
+        assert mc.timesteps.shape == (31,)
+
+    def test_horizon_day_count(self) -> None:
+        """A 365-day horizon should produce exactly 365 daily accrual steps."""
+        mc = run_monte_carlo(
+            u0=0.78,
+            collateral_value=14160.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=10,
+            horizon_days=365,
+            seed=42,
+        )
+        # 366 columns: index 0 (initial) + 365 daily steps
+        assert mc.utilization_paths.shape[1] == 366
 
     def test_deterministic(self) -> None:
         kwargs = dict(

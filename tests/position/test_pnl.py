@@ -64,3 +64,11 @@ class TestDailyPnl:
         pos = VaultPosition(collateral_amount=1000.0, debt_amount=0.0)
         pnl = daily_pnl(pos, provider)
         assert pnl > 0  # Pure staking + supply yield
+
+    def test_daily_pnl_underwater_not_zero(self, provider: StaticDataProvider) -> None:
+        """Even when equity is negative, daily P&L should reflect ongoing costs."""
+        # Very high debt relative to collateral → underwater position
+        pos = VaultPosition(collateral_amount=100.0, debt_amount=50_000.0)
+        pnl = daily_pnl(pos, provider)
+        # Should be negative (borrow cost >> staking income), not zero
+        assert pnl < 0

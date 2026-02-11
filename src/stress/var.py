@@ -91,14 +91,12 @@ def compute_var_from_scenarios(
     max_loss = float(np.min(pnl_array))
 
     # Liquidation probability: HF = (collateral * threshold) / debt < 1.0
-    # Use per-scenario arrays if provided (proper separation of collateral
-    # and debt), otherwise fall back to adding P&L to collateral.
+    # Callers MUST supply per-scenario collateral and debt arrays for
+    # accurate HF-based liquidation checks.  The old fallback (adding
+    # blended P&L to collateral) conflated debt-side shocks with
+    # collateral losses and produced wrong liquidation probabilities.
     if stressed_collateral_array is not None and stressed_debt_array is not None:
         hf_array = (stressed_collateral_array * liquidation_threshold) / stressed_debt_array
-        liquidation_prob = float(np.mean(hf_array < 1.0))
-    elif collateral_value > 0 and debt_value > 0:
-        stressed_collateral = collateral_value + pnl_array
-        hf_array = (stressed_collateral * liquidation_threshold) / debt_value
         liquidation_prob = float(np.mean(hf_array < 1.0))
     else:
         liquidation_prob = 0.0

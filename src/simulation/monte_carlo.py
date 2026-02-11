@@ -128,7 +128,7 @@ def run_monte_carlo(
 
     rng = np.random.default_rng(seed)
     dt = 1.0 / 365.0
-    n_steps = horizon_days
+    n_steps = horizon_days + 1  # +1: index 0 = initial state, indices 1..horizon_days = daily steps
 
     # Simulate utilization
     util_paths = simulate_utilization_paths(

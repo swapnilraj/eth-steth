@@ -73,3 +73,34 @@ class TestComputeVarFromScenarios:
         var = compute_var_from_scenarios(pnl)
         assert var.cvar_95 <= var.var_95
         assert var.cvar_99 <= var.var_99
+
+    def test_liquidation_prob_zero_without_arrays(self) -> None:
+        """Without stressed collateral/debt arrays, liquidation prob should be 0."""
+        pnl = np.array([-1000.0] * 100)  # severe losses
+        var = compute_var_from_scenarios(
+            pnl,
+            collateral_value=14000.0,
+            debt_value=10000.0,
+        )
+        # No arrays provided → no HF computation → 0 liquidation prob
+        assert var.liquidation_prob == 0.0
+
+    def test_liquidation_prob_with_arrays(self) -> None:
+        """With explicit arrays, liquidation prob should reflect HF < 1.0."""
+        n = 100
+        pnl = np.zeros(n)
+        # Half the scenarios have HF < 1.0, half have HF > 1.0
+        stressed_coll = np.full(n, 10000.0)
+        # Safe half: debt=9000 → HF = (10000 * 0.955) / 9000 ≈ 1.061 > 1.0
+        stressed_debt = np.full(n, 9000.0)
+        # Liquidated half: debt=12000 → HF = (10000 * 0.955) / 12000 ≈ 0.796 < 1.0
+        stressed_debt[:50] = 12000.0
+        var = compute_var_from_scenarios(
+            pnl,
+            collateral_value=10000.0,
+            debt_value=10000.0,
+            liquidation_threshold=0.955,
+            stressed_collateral_array=stressed_coll,
+            stressed_debt_array=stressed_debt,
+        )
+        assert var.liquidation_prob == pytest.approx(0.5)

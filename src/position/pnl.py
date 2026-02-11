@@ -75,9 +75,16 @@ def daily_pnl(
     provider: PoolDataProvider,
     staking_apy: float = 0.035,
 ) -> float:
-    """Estimate daily P&L in ETH for the position."""
+    """Estimate daily P&L in ETH for the position.
+
+    Returns income minus cost regardless of whether equity is positive or
+    negative.  An underwater position still accrues borrow interest (and
+    earns staking yield), so the daily P&L should stay negative rather
+    than flat-lining at zero.
+    """
     breakdown = compute_apy_breakdown(position, provider, staking_apy)
-    equity = position.net_value(provider)
-    if equity <= 0:
-        return 0.0
-    return equity * breakdown.net_apy / 365.25
+    collateral_val = position.collateral_value(provider)
+    debt_val = position.debt_value(provider)
+    income = collateral_val * (staking_apy + breakdown.supply_apy)
+    cost = debt_val * breakdown.borrow_apy
+    return (income - cost) / 365.25

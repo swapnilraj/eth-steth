@@ -77,6 +77,18 @@ class TestSupplyRate:
             assert model.supply_rate(u) < model.variable_borrow_rate(u)
 
 
+    def test_supply_rate_clamped_above_100_percent(self, model: InterestRateModel) -> None:
+        """Supply rate at utilization > 1 should equal supply rate at 1.0."""
+        rate_at_1 = model.supply_rate(1.0)
+        rate_at_1_5 = model.supply_rate(1.5)
+        assert rate_at_1_5 == pytest.approx(rate_at_1)
+
+    def test_supply_rate_never_exceeds_borrow_rate(self, model: InterestRateModel) -> None:
+        """Supply rate must never exceed borrow rate for any utilization."""
+        for u in [0.1, 0.5, 0.92, 0.99, 1.0, 1.5, 2.0]:
+            assert model.supply_rate(u) <= model.variable_borrow_rate(min(u, 1.0))
+
+
 class TestRateCurve:
     def test_curve_shape(self, model: InterestRateModel) -> None:
         df = model.rate_curve(n_points=100)

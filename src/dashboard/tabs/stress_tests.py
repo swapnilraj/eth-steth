@@ -176,6 +176,15 @@ def render_stress_tests(
         wsteth_state.total_debt / wsteth_state.total_supply if wsteth_state.total_supply > 0 else 0.0
     )
 
+    var_seed = st.number_input(
+        "Random Seed (VaR MC)",
+        min_value=0,
+        max_value=99999,
+        value=42,
+        step=1,
+        key="var_mc_seed",
+    )
+
     mc_result = run_monte_carlo(
         u0=weth_state.utilization,
         collateral_value=collateral_val,
@@ -189,7 +198,7 @@ def render_stress_tests(
         slope2=weth_params.slope2,
         n_paths=2000,
         horizon_days=365,
-        seed=42,
+        seed=int(var_seed),
     )
 
     var_result = compute_var(mc_result)
@@ -219,19 +228,30 @@ def render_stress_tests(
         "distribution — large ETH drawdowns produce wider rate shocks."
     )
 
-    n_corr = st.number_input(
-        "Number of Correlated Scenarios",
-        min_value=100,
-        max_value=10000,
-        value=1000,
-        step=100,
-    )
+    corr_col1, corr_col2 = st.columns(2)
+    with corr_col1:
+        n_corr = st.number_input(
+            "Number of Correlated Scenarios",
+            min_value=100,
+            max_value=10000,
+            value=1000,
+            step=100,
+        )
+    with corr_col2:
+        corr_seed = st.number_input(
+            "Random Seed (Correlated)",
+            min_value=0,
+            max_value=99999,
+            value=42,
+            step=1,
+            key="corr_seed",
+        )
 
     corr_scenarios = generate_correlated_scenarios(
         n_scenarios=int(n_corr),
         base_peg=current_peg,
         base_utilization=weth_state.utilization,
-        seed=42,
+        seed=int(corr_seed),
     )
 
     # ETH/USD moves cancel out for ETH-denominated positions (both
