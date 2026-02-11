@@ -1,0 +1,28 @@
+[project]
+name = "eth-steth"
+version = "0.1.0"
+description = "wstETH/ETH Risk Dashboard — Aave V3 position modeling"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "plotly>=5.18",
+    "streamlit>=1.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
