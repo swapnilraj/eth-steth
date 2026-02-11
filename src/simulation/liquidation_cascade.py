@@ -11,11 +11,20 @@ from src.simulation.results import CascadeResult, CascadeStep
 class CascadeConfig:
     """Configuration for a liquidation cascade simulation.
 
+    The cascade is driven by price impact: selling seized wstETH on the
+    market pushes the peg down, which makes more positions unhealthy.
+    This is the real-world cascade mechanism for cross-asset positions
+    (wstETH collateral / WETH debt).
+
     Attributes:
         initial_debt_to_liquidate: Starting debt amount to liquidate (WETH).
-        collateral_price: wstETH/ETH price for debt→collateral conversion.
+        collateral_price: Initial wstETH/ETH price.
         liquidation_bonus: Fraction bonus for liquidators (e.g. 0.01 = 1%).
-        rate_sensitivity: Fraction of debt that becomes at-risk per 1% rate increase.
+        price_impact_per_unit: Fractional peg drop per unit of wstETH sold.
+            E.g. 0.00001 means selling 10,000 wstETH drops the peg by 10%.
+        depeg_sensitivity: Fraction of remaining debt that becomes at-risk
+            per 1% further depeg.  E.g. 0.10 means a 1% depeg puts 10% of
+            outstanding debt at risk of liquidation.
         max_steps: Maximum cascade iterations.
         min_debt_threshold: Stop cascade when at-risk debt falls below this.
     """
@@ -23,7 +32,8 @@ class CascadeConfig:
     initial_debt_to_liquidate: float
     collateral_price: float = 1.18
     liquidation_bonus: float = 0.01
-    rate_sensitivity: float = 0.05
+    price_impact_per_unit: float = 0.00001
+    depeg_sensitivity: float = 0.10
     max_steps: int = 10
     min_debt_threshold: float = 100.0
 
@@ -35,19 +45,15 @@ def simulate_cascade(
 ) -> CascadeResult:
     """Simulate an iterative liquidation cascade.
 
-    Models the WETH debt pool correctly: when debt is liquidated, the
-    liquidator repays WETH debt, so total_debt decreases but total_supply
-    (aToken supply) stays the same. Utilization = debt / supply drops,
-    and borrow rates fall.
+    Cascade mechanism (price-impact driven):
+      1. Liquidate debt → seize wstETH collateral
+      2. Liquidators sell seized wstETH → price impact depresses peg
+      3. Lower peg → more positions breach HF → new at-risk debt
+      4. Repeat until at-risk debt falls below threshold
 
-    Collateral seizure happens in the wstETH pool (separate) and is
-    converted using collateral_price for reporting, but does not affect
-    WETH pool utilization.
-
-    Cascade propagation comes from borrowers whose positions become
-    unhealthy due to rate changes or peg movements, not from the WETH
-    pool mechanics alone. The rate_sensitivity parameter models this
-    second-order effect as a heuristic.
+    WETH pool mechanics: debt decreases, supply stays the same (repaid
+    WETH returns to available liquidity).  Collateral seizure is in the
+    wstETH pool (separate from WETH).
 
     Does NOT mutate the input pool_state.
 
@@ -61,10 +67,9 @@ def simulate_cascade(
     """
     rate_model = InterestRateModel(rate_params)
 
-    # Work with copies of the WETH pool
     supply = pool_state.total_supply
     debt = pool_state.total_debt
-    prev_rate = rate_model.variable_borrow_rate(pool_state.utilization)
+    collateral_price = config.collateral_price
 
     steps: list[CascadeStep] = []
     total_debt_liquidated = 0.0
@@ -78,31 +83,30 @@ def simulate_cascade(
         if debt_to_liquidate > debt:
             debt_to_liquidate = debt
 
-        # Collateral seized in wstETH terms:
-        # seized = (debt_repaid * (1 + bonus)) / collateral_price
+        # Collateral seized in wstETH terms
         collateral_seized = (
-            debt_to_liquidate * (1.0 + config.liquidation_bonus) / config.collateral_price
+            debt_to_liquidate * (1.0 + config.liquidation_bonus) / collateral_price
         )
 
-        # Update WETH pool: debt decreases, supply stays the same
-        # (repaid WETH returns to available liquidity within the pool)
+        # WETH pool: debt decreases, supply unchanged
         debt -= debt_to_liquidate
-
         total_debt_liquidated += debt_to_liquidate
         total_collateral_seized += collateral_seized
 
-        # Recompute utilization: debt / supply (supply unchanged)
+        # Price impact: selling seized wstETH depresses the peg
+        peg_drop = collateral_seized * config.price_impact_per_unit
+        collateral_price = collateral_price * (1.0 - peg_drop)
+        if collateral_price < 0.01:
+            collateral_price = 0.01  # floor
+
+        # Recompute WETH utilization and rate
         utilization = debt / supply if supply > 0 else 0.0
         new_rate = rate_model.variable_borrow_rate(utilization)
 
-        # Estimate new at-risk debt from rate change.
-        # After liquidation, WETH utilization drops → rates drop.
-        # But in a depeg scenario many positions become unhealthy
-        # simultaneously, so the cascade may still propagate.
-        # rate_sensitivity is a heuristic for this second-order effect.
-        rate_change_pct = (new_rate - prev_rate) * 100.0  # percentage points
-        # Only positive rate changes create new at-risk debt
-        at_risk_debt = max(0.0, debt * config.rate_sensitivity * rate_change_pct)
+        # At-risk debt: fraction of remaining debt that becomes unhealthy
+        # due to the further depeg.  depeg_sensitivity = fraction per 1% depeg.
+        depeg_pct = peg_drop * 100.0
+        at_risk_debt = max(0.0, debt * config.depeg_sensitivity * depeg_pct)
 
         steps.append(
             CascadeStep(
@@ -113,14 +117,13 @@ def simulate_cascade(
                 total_debt=debt,
                 utilization=utilization,
                 borrow_rate=new_rate,
+                collateral_price=collateral_price,
                 at_risk_debt=at_risk_debt,
             )
         )
 
-        prev_rate = new_rate
         debt_to_liquidate = at_risk_debt
 
-    # Final state
     final_util = debt / supply if supply > 0 else 0.0
     final_rate = rate_model.variable_borrow_rate(final_util)
 

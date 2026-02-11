@@ -103,9 +103,27 @@ class TestCorrelatedScenarios:
     def test_correlation_structure(self) -> None:
         """ETH price drops should correlate with peg drops."""
         result = generate_correlated_scenarios(n_scenarios=5000, seed=42)
+        # Peg shocks centred around base_peg (default 1.0)
         corr = np.corrcoef(result[:, 0], result[:, 1] - 1.0)[0, 1]
         # Should be positively correlated (both drop together)
         assert corr > 0.3
+
+    def test_base_peg_shifts_distribution(self) -> None:
+        """Scenarios should centre around the supplied base_peg."""
+        result = generate_correlated_scenarios(
+            n_scenarios=5000, base_peg=0.95, seed=42
+        )
+        mean_peg = float(np.mean(result[:, 1]))
+        # Mean should be close to 0.95, not 1.0
+        assert abs(mean_peg - 0.95) < 0.03
+
+    def test_base_utilization_shifts_distribution(self) -> None:
+        """Scenarios should centre around the supplied base_utilization."""
+        result = generate_correlated_scenarios(
+            n_scenarios=5000, base_utilization=0.90, seed=42
+        )
+        mean_util = float(np.mean(result[:, 2]))
+        assert abs(mean_util - 0.90) < 0.05
 
     def test_custom_correlation_matrix(self) -> None:
         custom = CorrelationMatrix(

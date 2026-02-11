@@ -41,7 +41,8 @@ class TestCascadeSimulation:
     ) -> None:
         config = CascadeConfig(
             initial_debt_to_liquidate=100_000.0,
-            rate_sensitivity=0.10,
+            price_impact_per_unit=0.0001,
+            depeg_sensitivity=0.50,
             max_steps=3,
         )
         result = simulate_cascade(pool_state, rate_params, config)
@@ -52,7 +53,7 @@ class TestCascadeSimulation:
     ) -> None:
         config = CascadeConfig(
             initial_debt_to_liquidate=100_000.0,
-            rate_sensitivity=0.0,
+            depeg_sensitivity=0.0,
         )
         result = simulate_cascade(pool_state, rate_params, config)
         assert len(result.steps) == 1
@@ -62,7 +63,7 @@ class TestCascadeSimulation:
     ) -> None:
         config = CascadeConfig(
             initial_debt_to_liquidate=50_000.0,
-            rate_sensitivity=0.0,
+            depeg_sensitivity=0.0,
         )
         result = simulate_cascade(pool_state, rate_params, config)
         step_sum = sum(s.debt_liquidated for s in result.steps)
@@ -77,7 +78,7 @@ class TestCascadeSimulation:
             initial_debt_to_liquidate=100_000.0,
             collateral_price=collateral_price,
             liquidation_bonus=0.05,
-            rate_sensitivity=0.0,
+            depeg_sensitivity=0.0,
         )
         result = simulate_cascade(pool_state, rate_params, config)
         assert len(result.steps) == 1
@@ -90,22 +91,21 @@ class TestCascadeSimulation:
     ) -> None:
         config = CascadeConfig(
             initial_debt_to_liquidate=200_000.0,
-            rate_sensitivity=0.05,
+            price_impact_per_unit=0.0001,
+            depeg_sensitivity=0.20,
             max_steps=5,
         )
         result = simulate_cascade(pool_state, rate_params, config)
-        # Final debt in the last step should be less than original
         if result.steps:
             assert result.steps[-1].total_debt < pool_state.total_debt
 
     def test_supply_unchanged_after_liquidation(
         self, pool_state: PoolState, rate_params: InterestRateParams
     ) -> None:
-        """In the WETH pool, supply stays the same after liquidation
-        (repaid debt returns to available liquidity)."""
+        """In the WETH pool, supply stays the same after liquidation."""
         config = CascadeConfig(
             initial_debt_to_liquidate=100_000.0,
-            rate_sensitivity=0.0,
+            depeg_sensitivity=0.0,
         )
         result = simulate_cascade(pool_state, rate_params, config)
         assert result.steps[0].total_supply == pool_state.total_supply
@@ -113,10 +113,10 @@ class TestCascadeSimulation:
     def test_utilization_drops_after_liquidation(
         self, pool_state: PoolState, rate_params: InterestRateParams
     ) -> None:
-        """Liquidation repays debt → utilization drops in the WETH pool."""
+        """Liquidation repays debt -> utilization drops in the WETH pool."""
         config = CascadeConfig(
             initial_debt_to_liquidate=100_000.0,
-            rate_sensitivity=0.0,
+            depeg_sensitivity=0.0,
         )
         result = simulate_cascade(pool_state, rate_params, config)
         assert result.final_utilization < pool_state.utilization
@@ -125,9 +125,41 @@ class TestCascadeSimulation:
         self, pool_state: PoolState, rate_params: InterestRateParams
     ) -> None:
         config = CascadeConfig(
-            initial_debt_to_liquidate=50.0,  # Below default threshold of 100
+            initial_debt_to_liquidate=50.0,
             min_debt_threshold=100.0,
         )
         result = simulate_cascade(pool_state, rate_params, config)
         assert len(result.steps) == 0
         assert result.total_debt_liquidated == 0.0
+
+    def test_price_impact_depresses_collateral_price(
+        self, pool_state: PoolState, rate_params: InterestRateParams
+    ) -> None:
+        """Selling seized wstETH should lower the collateral price each step."""
+        config = CascadeConfig(
+            initial_debt_to_liquidate=100_000.0,
+            collateral_price=1.18,
+            price_impact_per_unit=0.000001,
+            depeg_sensitivity=0.30,
+            max_steps=5,
+        )
+        result = simulate_cascade(pool_state, rate_params, config)
+        assert len(result.steps) > 1
+        # Each step should have a lower collateral price
+        for i in range(1, len(result.steps)):
+            assert result.steps[i].collateral_price < result.steps[i - 1].collateral_price
+
+    def test_cascade_propagates_with_price_impact(
+        self, pool_state: PoolState, rate_params: InterestRateParams
+    ) -> None:
+        """With sufficient price impact and sensitivity, cascade should
+        produce multiple steps."""
+        config = CascadeConfig(
+            initial_debt_to_liquidate=200_000.0,
+            collateral_price=1.18,
+            price_impact_per_unit=0.000001,
+            depeg_sensitivity=0.30,
+            max_steps=10,
+        )
+        result = simulate_cascade(pool_state, rate_params, config)
+        assert len(result.steps) > 1

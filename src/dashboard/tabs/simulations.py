@@ -117,7 +117,7 @@ def render_simulations(
     # --- Section 2: Liquidation Cascade ---
     st.subheader("Liquidation Cascade Analysis")
 
-    cas_col1, cas_col2, cas_col3 = st.columns(3)
+    cas_col1, cas_col2 = st.columns(2)
     with cas_col1:
         init_debt = st.number_input(
             "Initial Debt to Liquidate",
@@ -127,7 +127,6 @@ def render_simulations(
             step=10_000.0,
             format="%.0f",
         )
-    with cas_col2:
         liq_bonus = st.number_input(
             "Liquidation Bonus",
             min_value=0.001,
@@ -136,12 +135,20 @@ def render_simulations(
             step=0.005,
             format="%.3f",
         )
-    with cas_col3:
-        rate_sens = st.number_input(
-            "Rate Sensitivity",
+    with cas_col2:
+        price_impact = st.number_input(
+            "Price Impact per wstETH Sold",
+            min_value=0.000001,
+            max_value=0.001,
+            value=0.00001,
+            step=0.000001,
+            format="%.6f",
+        )
+        depeg_sens = st.number_input(
+            "Depeg Sensitivity",
             min_value=0.0,
-            max_value=0.20,
-            value=0.05,
+            max_value=0.50,
+            value=0.10,
             step=0.01,
             format="%.2f",
         )
@@ -151,7 +158,8 @@ def render_simulations(
         initial_debt_to_liquidate=init_debt,
         collateral_price=wsteth_price,
         liquidation_bonus=liq_bonus,
-        rate_sensitivity=rate_sens,
+        price_impact_per_unit=price_impact,
+        depeg_sensitivity=depeg_sens,
     )
 
     rate_params = InterestRateParams(

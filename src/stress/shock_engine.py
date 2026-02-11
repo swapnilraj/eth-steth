@@ -83,6 +83,8 @@ def apply_scenario(
 
 def generate_correlated_scenarios(
     n_scenarios: int,
+    base_peg: float = 1.0,
+    base_utilization: float = 0.78,
     eth_vol: float = 0.30,
     peg_vol: float = 0.05,
     util_vol: float = 0.10,
@@ -93,6 +95,8 @@ def generate_correlated_scenarios(
 
     Args:
         n_scenarios: Number of correlated scenarios to generate.
+        base_peg: Current stETH/ETH peg to centre shocks around.
+        base_utilization: Current WETH utilization to centre shocks around.
         eth_vol: Annualized ETH price volatility.
         peg_vol: stETH peg deviation volatility.
         util_vol: Utilization shock volatility.
@@ -123,11 +127,11 @@ def generate_correlated_scenarios(
 
     # Post-process:
     # eth_price_change: raw (can be negative)
-    # steth_peg: 1.0 + peg_shock, clamped to (0, 1]
-    # utilization_shock: base_util + util_shock, clamped to [0, 1]
+    # steth_peg: base_peg + peg_shock, clamped to (0, 1]
+    # utilization_shock: base_utilization + util_shock, clamped to [0, 1]
     result = np.empty_like(shocks)
     result[:, 0] = shocks[:, 0]  # ETH price change (fractional)
-    result[:, 1] = np.clip(1.0 + shocks[:, 1], 0.01, 1.0)  # peg ratio
-    result[:, 2] = np.clip(0.78 + shocks[:, 2], 0.0, 1.0)  # utilization level
+    result[:, 1] = np.clip(base_peg + shocks[:, 1], 0.01, 1.0)  # peg ratio
+    result[:, 2] = np.clip(base_utilization + shocks[:, 2], 0.0, 1.0)  # utilization level
 
     return result

@@ -93,16 +93,14 @@ def render_stress_tests(
     # --- Section 2: Custom Scenario Builder ---
     st.subheader("Custom Scenario Builder")
 
-    cs_col1, cs_col2, cs_col3, cs_col4 = st.columns(4)
+    st.caption(
+        "ETH/USD price changes do not affect an ETH-denominated position's health factor "
+        "(both collateral and debt move equally). Only the stETH/ETH peg, utilization, "
+        "and duration matter."
+    )
+
+    cs_col1, cs_col2, cs_col3 = st.columns(3)
     with cs_col1:
-        custom_eth = st.slider(
-            "ETH Price Change (%)",
-            min_value=-80,
-            max_value=50,
-            value=-30,
-            step=5,
-        ) / 100.0
-    with cs_col2:
         custom_peg = st.slider(
             "stETH/ETH Peg",
             min_value=0.80,
@@ -111,7 +109,7 @@ def render_stress_tests(
             step=0.01,
             format="%.2f",
         )
-    with cs_col3:
+    with cs_col2:
         custom_util = st.slider(
             "Utilization Shock (%)",
             min_value=50,
@@ -119,7 +117,7 @@ def render_stress_tests(
             value=95,
             step=1,
         ) / 100.0
-    with cs_col4:
+    with cs_col3:
         custom_days = st.number_input(
             "Duration (days)",
             min_value=1,
@@ -130,7 +128,7 @@ def render_stress_tests(
 
     custom_scenario = create_custom_scenario(
         name="Custom",
-        eth_price_change=custom_eth,
+        eth_price_change=0.0,
         steth_peg=custom_peg,
         utilization_shock=custom_util,
         duration_days=int(custom_days),
@@ -223,6 +221,8 @@ def render_stress_tests(
 
     corr_scenarios = generate_correlated_scenarios(
         n_scenarios=int(n_corr),
+        base_peg=current_peg,
+        base_utilization=weth_state.utilization,
         seed=42,
     )
 

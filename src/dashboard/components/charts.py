@@ -290,7 +290,7 @@ def liquidation_probability_chart(mc_result: MonteCarloResult) -> go.Figure:
 
 
 def cascade_waterfall_chart(cascade_result: CascadeResult) -> go.Figure:
-    """Dual-axis chart: debt liquidated bars + borrow rate line per cascade step."""
+    """Dual-axis chart: debt liquidated bars + wstETH price line per cascade step."""
     if not cascade_result.steps:
         fig = go.Figure()
         fig.update_layout(title="No cascade steps", template="plotly_dark", height=400)
@@ -298,7 +298,7 @@ def cascade_waterfall_chart(cascade_result: CascadeResult) -> go.Figure:
 
     steps = [s.step for s in cascade_result.steps]
     debts = [s.debt_liquidated for s in cascade_result.steps]
-    rates = [s.borrow_rate * 100 for s in cascade_result.steps]
+    prices = [s.collateral_price for s in cascade_result.steps]
 
     fig = go.Figure()
 
@@ -317,11 +317,11 @@ def cascade_waterfall_chart(cascade_result: CascadeResult) -> go.Figure:
     fig.add_trace(
         go.Scatter(
             x=steps,
-            y=rates,
-            name="Borrow Rate (%)",
+            y=prices,
+            name="wstETH Price (ETH)",
             line=dict(color="#f59e0b", width=2),
             yaxis="y2",
-            hovertemplate="Step %{x}<br>Rate: %{y:.2f}%<extra></extra>",
+            hovertemplate="Step %{x}<br>Price: %{y:.4f}<extra></extra>",
         )
     )
 
@@ -329,7 +329,7 @@ def cascade_waterfall_chart(cascade_result: CascadeResult) -> go.Figure:
         title="Liquidation Cascade Waterfall",
         xaxis_title="Cascade Step",
         yaxis=dict(title="Debt Liquidated", side="left"),
-        yaxis2=dict(title="Borrow Rate (%)", side="right", overlaying="y"),
+        yaxis2=dict(title="wstETH Price (ETH)", side="right", overlaying="y"),
         template="plotly_dark",
         height=450,
         legend=dict(x=0.01, y=0.99),

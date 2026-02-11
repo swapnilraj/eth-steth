@@ -39,6 +39,7 @@ class CascadeStep:
     total_debt: float
     utilization: float
     borrow_rate: float
+    collateral_price: float
     at_risk_debt: float
 
 
