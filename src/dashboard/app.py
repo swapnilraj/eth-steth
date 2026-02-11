@@ -14,6 +14,13 @@ if _env_path.exists():
             key, _, value = line.partition("=")
             os.environ.setdefault(key.strip(), value.strip())
 
+# Bridge Streamlit Cloud secrets into os.environ so the rest of the app
+# (provider_factory, sidebar) can read them via os.environ.get().
+if hasattr(st, "secrets"):
+    for key in st.secrets:
+        if isinstance(st.secrets[key], str):
+            os.environ.setdefault(key, st.secrets[key])
+
 from src.dashboard.components.sidebar import render_sidebar
 from src.dashboard.tabs.liquidation import render_liquidation
 from src.dashboard.tabs.overview import render_overview
