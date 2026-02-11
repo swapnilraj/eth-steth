@@ -1,6 +1,18 @@
 """wstETH/ETH Risk Dashboard — Main Streamlit entry point."""
 
+import os
+from pathlib import Path
+
 import streamlit as st
+
+# Load .env file if present (for ETH_RPC_URL, etc.)
+_env_path = Path(__file__).resolve().parents[2] / ".env"
+if _env_path.exists():
+    for line in _env_path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
 
 from src.dashboard.components.sidebar import render_sidebar
 from src.dashboard.pages.liquidation import render_liquidation
@@ -8,7 +20,7 @@ from src.dashboard.pages.overview import render_overview
 from src.dashboard.pages.rates import render_rates
 from src.dashboard.pages.simulations import render_simulations
 from src.dashboard.pages.stress_tests import render_stress_tests
-from src.data.static_params import StaticDataProvider
+from src.data.provider_factory import create_provider
 from src.position.vault_position import VaultPosition
 
 
@@ -25,8 +37,14 @@ def main() -> None:
     # Sidebar controls
     params = render_sidebar()
 
-    # Build provider (static for Phase 1)
-    provider = StaticDataProvider()
+    # Build provider
+    provider = create_provider(use_onchain=params.use_onchain_data)
+
+    # Refresh button for on-chain data
+    if params.use_onchain_data and hasattr(provider, "refresh"):
+        if st.button("Refresh On-Chain Data"):
+            provider.refresh()  # type: ignore[attr-defined]
+            st.rerun()
 
     # Build position from sidebar params
     position = VaultPosition(

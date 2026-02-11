@@ -15,10 +15,28 @@ class SidebarParams:
     utilization_override: float | None
     depeg_level: float
     staking_apy: float
+    use_onchain_data: bool = False
 
 
 def render_sidebar() -> SidebarParams:
     """Render sidebar controls and return selected parameters."""
+    st.sidebar.header("Data Source")
+
+    use_onchain = st.sidebar.checkbox("Use On-Chain Data", value=False)
+    if use_onchain:
+        try:
+            from src.data.onchain_provider import OnChainDataProvider
+
+            import os
+
+            rpc_url = os.environ.get("ETH_RPC_URL", "")
+            if rpc_url:
+                st.sidebar.caption("RPC: connected")
+            else:
+                st.sidebar.caption("RPC: no ETH_RPC_URL set — will use static fallback")
+        except ImportError:
+            st.sidebar.caption("web3 not installed — will use static fallback")
+
     st.sidebar.header("Position Parameters")
 
     collateral = st.sidebar.number_input(
@@ -78,4 +96,5 @@ def render_sidebar() -> SidebarParams:
         utilization_override=util_override,
         depeg_level=depeg,
         staking_apy=staking_apy,
+        use_onchain_data=use_onchain,
     )

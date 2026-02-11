@@ -12,6 +12,9 @@ wstETH/ETH Risk Dashboard for Aave V3 — models a Mellow vault leveraged positi
 # Install
 uv pip install -e ".[dev]"
 
+# Install with on-chain data support (optional)
+uv pip install -e ".[dev,onchain]"
+
 # Run all tests
 uv run pytest
 
@@ -20,6 +23,9 @@ uv run pytest tests/protocol/test_interest_rate.py
 
 # Run a specific test class or method
 uv run pytest tests/protocol/test_interest_rate.py::TestVariableBorrowRate::test_rate_at_zero_utilization
+
+# Run live on-chain integration tests (requires ETH_RPC_URL)
+ETH_RPC_URL=... uv run pytest -m onchain
 
 # Run dashboard
 uv run streamlit run src/dashboard/app.py
@@ -31,7 +37,7 @@ No linter or formatter is configured.
 
 All values are denominated in ETH. The codebase uses `src.*` imports (pythonpath is `.`).
 
-**`src/data/`** — Abstract `PoolDataProvider` interface and `StaticDataProvider` with hardcoded Aave V3 mainnet parameters. All other modules consume data through this interface.
+**`src/data/`** — Abstract `PoolDataProvider` interface, `StaticDataProvider` with hardcoded parameters, and `OnChainDataProvider` fetching live Aave V3 data via web3.py (`contracts.py` for addresses/ABIs, `onchain_provider.py` for the provider, `provider_factory.py` for selection logic). `web3` is an optional dependency; the project works without it.
 
 **`src/protocol/`** — Aave V3 mechanics: piecewise-linear kinked interest rate model (`InterestRateModel`), pool state with non-mutating simulation methods (`PoolModel`), liquidation logic with E-mode support (`LiquidationModel`).
 
