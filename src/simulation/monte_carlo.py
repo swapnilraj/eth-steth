@@ -17,7 +17,7 @@ class OUParams:
         sigma: Volatility of utilization shocks.
     """
 
-    theta: float = 0.44
+    theta: float = 0.78
     kappa: float = 5.0
     sigma: float = 0.08
 
@@ -87,6 +87,7 @@ def run_monte_carlo(
     debt_value: float,
     liquidation_threshold: float,
     staking_apy: float,
+    supply_apy: float = 0.0,
     optimal_utilization: float = 0.92,
     base_rate: float = 0.0,
     slope1: float = 0.027,
@@ -98,12 +99,18 @@ def run_monte_carlo(
 ) -> MonteCarloResult:
     """Run a full Monte Carlo simulation of borrow rates and P&L.
 
+    Models Aave mechanics faithfully:
+    - Collateral value grows with staking + supply APY
+    - Debt balance grows with accrued borrow interest
+    - HF = (collateral * liq_threshold) / debt, checked each step
+
     Args:
         u0: Initial WETH utilization.
         collateral_value: Collateral value in ETH.
         debt_value: Debt value in ETH.
         liquidation_threshold: Liquidation threshold (e.g. 0.955 for E-mode).
         staking_apy: Annual staking yield.
+        supply_apy: Annual Aave supply yield on wstETH collateral.
         optimal_utilization: Kink point for rate curve.
         base_rate: Base borrow rate.
         slope1: Slope below kink.
@@ -133,26 +140,31 @@ def run_monte_carlo(
         util_paths, optimal_utilization, base_rate, slope1, slope2
     )
 
-    # P&L tracking: daily income - daily cost, accumulated
-    # Income per day = collateral_value * staking_apy / 365
-    # Cost per day = debt_value * borrow_rate / 365
-    daily_income = collateral_value * staking_apy / 365.0
-    daily_cost = debt_value * rate_paths / 365.0  # (n_paths, n_steps)
-    daily_pnl = daily_income - daily_cost
+    # Track collateral and debt balances per path (Aave mechanics):
+    # - Collateral accrues staking + supply yield daily
+    # - Debt accrues borrow interest daily (variable debt tokens grow)
+    collateral_paths = np.empty((n_paths, n_steps))
+    debt_paths = np.empty((n_paths, n_steps))
+    collateral_paths[:, 0] = collateral_value
+    debt_paths[:, 0] = debt_value
 
-    pnl_paths = np.cumsum(daily_pnl, axis=1)
+    daily_income_rate = (staking_apy + supply_apy) / 365.0
+    for t in range(1, n_steps):
+        # Collateral grows with staking + supply yield
+        collateral_paths[:, t] = collateral_paths[:, t - 1] * (1.0 + daily_income_rate)
+        # Debt grows with accrued borrow interest
+        daily_borrow_rate = rate_paths[:, t - 1] / 365.0
+        debt_paths[:, t] = debt_paths[:, t - 1] * (1.0 + daily_borrow_rate)
+
+    # P&L = equity change from initial
+    equity_paths = collateral_paths - debt_paths
+    initial_equity = collateral_value - debt_value
+    pnl_paths = equity_paths - initial_equity
     terminal_pnl = pnl_paths[:, -1]
 
-    # Liquidation detection: check if cumulative losses erode equity enough
-    # that HF drops below 1.0
-    equity = collateral_value - debt_value
-    # HF = (collateral_value * liq_threshold) / (debt_value)
-    # As P&L erodes equity, effective collateral drops
-    # Simplified: liquidation when cumulative P&L < -(equity - debt_value * (1 - 1/liq_threshold))
-    # i.e., when collateral_value + pnl < debt_value / liq_threshold
-    liq_threshold_value = debt_value / liquidation_threshold
-    liq_pnl_threshold = -(collateral_value - liq_threshold_value)
-    liquidated = np.any(pnl_paths <= liq_pnl_threshold, axis=1)
+    # Liquidation detection: HF = (collateral * liq_threshold) / debt < 1.0
+    hf_paths = (collateral_paths * liquidation_threshold) / debt_paths
+    liquidated = np.any(hf_paths < 1.0, axis=1)
 
     timesteps = np.arange(n_steps, dtype=float)
 

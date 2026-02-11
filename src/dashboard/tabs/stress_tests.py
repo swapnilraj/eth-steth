@@ -13,6 +13,7 @@ from src.data.constants import WETH, WSTETH
 from src.data.interfaces import PoolDataProvider
 from src.position.vault_position import VaultPosition
 from src.protocol.pool import PoolState
+from src.protocol.interest_rate import InterestRateModel
 from src.simulation.monte_carlo import OUParams, run_monte_carlo
 from src.stress.scenarios import HISTORICAL_SCENARIOS, create_custom_scenario
 from src.stress.shock_engine import apply_scenario, generate_correlated_scenarios
@@ -29,8 +30,11 @@ def render_stress_tests(
 
     collateral_val = position.collateral_value(provider)
     debt_val = position.debt_value(provider)
-    collateral_price = provider.get_asset_price(WSTETH)
+    # The oracle price includes the peg. Extract exchange-rate-only price
+    # for stress/depeg analysis so we don't double-count.
     current_peg = provider.get_steth_eth_peg()
+    oracle_price = provider.get_asset_price(WSTETH)
+    collateral_price = oracle_price / current_peg if current_peg > 0 else oracle_price
     liq_model = position.get_liquidation_model(provider)
 
     # --- Section 1: Historical Scenarios ---
@@ -152,12 +156,21 @@ def render_stress_tests(
     weth_state = PoolState.from_reserve_state(provider.get_reserve_state(WETH))
     weth_params = provider.get_reserve_params(WETH)
 
+    # wstETH supply APY for MC income
+    wsteth_params = provider.get_reserve_params(WSTETH)
+    wsteth_state = PoolState.from_reserve_state(provider.get_reserve_state(WSTETH))
+    wsteth_rate_model = InterestRateModel(wsteth_params)
+    wsteth_supply_apy = wsteth_rate_model.supply_rate(
+        wsteth_state.total_debt / wsteth_state.total_supply if wsteth_state.total_supply > 0 else 0.0
+    )
+
     mc_result = run_monte_carlo(
         u0=weth_state.utilization,
         collateral_value=collateral_val,
         debt_value=debt_val,
         liquidation_threshold=liq_model.liquidation_threshold,
         staking_apy=staking_apy,
+        supply_apy=wsteth_supply_apy,
         optimal_utilization=weth_params.optimal_utilization,
         base_rate=weth_params.base_rate,
         slope1=weth_params.slope1,
@@ -200,14 +213,31 @@ def render_stress_tests(
         seed=42,
     )
 
-    # Apply each correlated scenario
+    # Apply each correlated scenario.
+    # For an ETH-denominated position, ETH/USD moves cancel out (both
+    # collateral and debt are in ETH). The risk factors that matter are:
+    #   1) stETH/ETH peg deviation (affects collateral value)
+    #   2) utilization shock (affects borrow rate → cost)
+    weth_rate_model = InterestRateModel(weth_params)
     corr_pnl = np.empty(len(corr_scenarios))
+    horizon_days = 30  # assume 30-day stress horizon
     for i, shock_vec in enumerate(corr_scenarios):
-        eth_change, peg, util = shock_vec
-        stressed_collateral = position.collateral_amount * collateral_price * (1.0 + eth_change) * peg
-        corr_pnl[i] = stressed_collateral - collateral_val
+        _eth_change, peg, util = shock_vec
+        # Collateral impact: only peg matters (ETH price change is irrelevant)
+        stressed_collateral = position.collateral_amount * collateral_price * peg
+        collateral_pnl = stressed_collateral - collateral_val
+        # Borrow cost impact from utilization shock
+        stressed_rate = weth_rate_model.variable_borrow_rate(util)
+        borrow_cost = debt_val * stressed_rate * (horizon_days / 365.0)
+        staking_income = collateral_val * staking_apy * (horizon_days / 365.0)
+        corr_pnl[i] = collateral_pnl + staking_income - borrow_cost
 
-    corr_var = compute_var_from_scenarios(corr_pnl)
+    corr_var = compute_var_from_scenarios(
+        corr_pnl,
+        collateral_value=collateral_val,
+        debt_value=debt_val,
+        liquidation_threshold=liq_model.liquidation_threshold,
+    )
 
     cv_col1, cv_col2, cv_col3 = st.columns(3)
     with cv_col1:

@@ -20,7 +20,13 @@ def render_liquidation(
     collateral_val = position.collateral_value(provider)
     debt_val = position.debt_value(provider)
     hf = liq_model.health_factor(collateral_val, debt_val)
-    wsteth_price = provider.get_asset_price(WSTETH)
+    # The oracle price already includes the stETH/ETH peg. For depeg
+    # sensitivity analysis we need the exchange-rate-only price (peg
+    # factored out), so that LiquidationModel.depeg_sensitivity can
+    # multiply by the stressed peg without double-counting.
+    current_peg = provider.get_steth_eth_peg()
+    wsteth_oracle_price = provider.get_asset_price(WSTETH)
+    wsteth_exchange_rate = wsteth_oracle_price / current_peg if current_peg > 0 else wsteth_oracle_price
 
     # Health factor gauge
     col1, col2 = st.columns([1, 1])
@@ -49,7 +55,7 @@ def render_liquidation(
 
     peg_at_liq = liq_model.depeg_to_liquidation(
         collateral_amount=position.collateral_amount,
-        collateral_price=wsteth_price,
+        collateral_price=wsteth_exchange_rate,
         debt_value=debt_val,
     )
 
@@ -64,7 +70,7 @@ def render_liquidation(
 
     df_depeg = liq_model.depeg_sensitivity(
         collateral_amount=position.collateral_amount,
-        collateral_price=wsteth_price,
+        collateral_price=wsteth_exchange_rate,
         debt_value=debt_val,
     )
 
@@ -88,7 +94,7 @@ def render_liquidation(
     scenarios = [1.0, 0.99, 0.98, 0.97, 0.96, 0.95, 0.93, 0.90, 0.85]
     rows = []
     for peg in scenarios:
-        adj_collateral = position.collateral_amount * wsteth_price * peg
+        adj_collateral = position.collateral_amount * wsteth_exchange_rate * peg
         scenario_hf = liq_model.health_factor(adj_collateral, debt_val)
         status = "Safe" if scenario_hf > 1.0 else "LIQUIDATABLE"
         rows.append(

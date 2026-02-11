@@ -15,10 +15,9 @@ class PoolState:
 
     @property
     def utilization(self) -> float:
-        total = self.total_supply + self.total_debt
-        if total <= 0:
+        if self.total_supply <= 0:
             return 0.0
-        return self.total_debt / total
+        return self.total_debt / self.total_supply
 
     @classmethod
     def from_reserve_state(cls, state: ReserveState) -> "PoolState":
@@ -47,6 +46,10 @@ class PoolModel:
     def simulate_borrow(self, amount: float) -> dict[str, float]:
         """Simulate the impact of an additional borrow on rates.
 
+        In Aave, a new borrow increases total_debt but total_supply (aToken
+        supply) stays the same — the borrowed amount comes from available
+        liquidity which is already part of total_supply.
+
         Returns dict with before/after utilization and rates.
         Does NOT mutate state.
         """
@@ -55,9 +58,9 @@ class PoolModel:
         r_supply_before = self.supply_rate
 
         new_debt = self.state.total_debt + amount
-        new_supply = self.state.total_supply - amount  # Borrow reduces available
-        new_total = new_supply + new_debt
-        u_after = new_debt / new_total if new_total > 0 else 0.0
+        # total_supply is unchanged — borrow reduces available liquidity,
+        # not aToken supply
+        u_after = new_debt / self.state.total_supply if self.state.total_supply > 0 else 0.0
 
         return {
             "utilization_before": u_before,
@@ -71,14 +74,16 @@ class PoolModel:
     def simulate_withdrawal(self, amount: float) -> dict[str, float]:
         """Simulate the impact of a supply withdrawal on rates.
 
+        A withdrawal reduces total_supply (aToken is burned).
+        Debt stays the same, so utilization = debt / new_supply.
+
         Does NOT mutate state.
         """
         u_before = self.utilization
         r_borrow_before = self.borrow_rate
 
         new_supply = self.state.total_supply - amount
-        new_total = new_supply + self.state.total_debt
-        u_after = self.state.total_debt / new_total if new_total > 0 else 0.0
+        u_after = self.state.total_debt / new_supply if new_supply > 0 else 0.0
 
         return {
             "utilization_before": u_before,
@@ -88,22 +93,25 @@ class PoolModel:
         }
 
     def simulate_liquidation_impact(
-        self, liquidated_debt: float, seized_collateral_supply: float
+        self, liquidated_debt: float
     ) -> dict[str, float]:
-        """Simulate how a liquidation event affects pool state.
+        """Simulate how a liquidation event affects the debt pool.
 
-        When ETH debt is liquidated:
-        - debt decreases by liquidated amount
-        - supply decreases by seized collateral (transferred to liquidator)
+        When ETH debt is liquidated in a cross-asset position (e.g.
+        wstETH collateral / WETH debt):
+        - WETH pool: debt decreases by liquidated amount, total supply
+          stays the same (repaid WETH returns to available liquidity),
+          so utilization drops.
+        - wstETH pool: collateral is seized (aToken supply drops), but
+          that is a separate pool and not modelled here.
 
         Does NOT mutate state.
         """
         u_before = self.utilization
 
-        new_debt = self.state.total_debt - liquidated_debt
-        new_supply = self.state.total_supply - seized_collateral_supply
-        new_total = new_supply + new_debt
-        u_after = new_debt / new_total if new_total > 0 else 0.0
+        new_debt = max(0.0, self.state.total_debt - liquidated_debt)
+        # total_supply unchanged — repaid debt returns to available liquidity
+        u_after = new_debt / self.state.total_supply if self.state.total_supply > 0 else 0.0
 
         return {
             "utilization_before": u_before,

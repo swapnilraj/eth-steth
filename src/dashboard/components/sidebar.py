@@ -67,7 +67,7 @@ def render_sidebar() -> SidebarParams:
                 "WETH Utilization (%)",
                 min_value=0,
                 max_value=100,
-                value=44,
+                value=78,
             )
             / 100.0
         )

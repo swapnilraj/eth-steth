@@ -56,14 +56,22 @@ def compute_var(mc_result: MonteCarloResult) -> VaRResult:
     )
 
 
-def compute_var_from_scenarios(pnl_array: np.ndarray) -> VaRResult:
+def compute_var_from_scenarios(
+    pnl_array: np.ndarray,
+    collateral_value: float = 0.0,
+    debt_value: float = 0.0,
+    liquidation_threshold: float = 0.955,
+) -> VaRResult:
     """Compute VaR from an array of scenario P&L values.
 
     Args:
         pnl_array: 1D array of P&L outcomes from correlated scenarios.
+        collateral_value: Current collateral value (for liquidation check).
+        debt_value: Current debt value (for liquidation check).
+        liquidation_threshold: Liquidation threshold (e.g. 0.955 for E-mode).
 
     Returns:
-        VaRResult with risk metrics (liquidation_prob set to fraction of negative equity).
+        VaRResult with risk metrics.
     """
     var_95 = float(np.percentile(pnl_array, 5))
     var_99 = float(np.percentile(pnl_array, 1))
@@ -76,16 +84,20 @@ def compute_var_from_scenarios(pnl_array: np.ndarray) -> VaRResult:
 
     max_loss = float(np.min(pnl_array))
 
-    # Approximate liquidation probability as fraction of extreme losses
-    # (P&L worse than -50% of mean)
-    mean_abs = np.mean(np.abs(pnl_array)) if len(pnl_array) > 0 else 1.0
-    liquidation_proxy = float(np.mean(pnl_array < -mean_abs)) if mean_abs > 0 else 0.0
+    # Liquidation probability: fraction of scenarios where
+    # HF = ((collateral + pnl) * liq_threshold) / debt < 1.0
+    if collateral_value > 0 and debt_value > 0:
+        stressed_collateral = collateral_value + pnl_array
+        hf_array = (stressed_collateral * liquidation_threshold) / debt_value
+        liquidation_prob = float(np.mean(hf_array < 1.0))
+    else:
+        liquidation_prob = 0.0
 
     return VaRResult(
         var_95=var_95,
         var_99=var_99,
         cvar_95=cvar_95,
         cvar_99=cvar_99,
-        liquidation_prob=liquidation_proxy,
+        liquidation_prob=liquidation_prob,
         max_loss=max_loss,
     )

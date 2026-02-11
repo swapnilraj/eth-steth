@@ -40,10 +40,13 @@ class TestApplyScenario:
         assert result.hf_before == pytest.approx(result.hf_after, rel=1e-6)
 
     def test_severe_depeg_triggers_liquidation(self) -> None:
+        # In an ETH-denominated position, only the peg matters for HF.
+        # A peg of 0.75 on 12k wstETH at 1.18 with 10.5k debt:
+        # HF = (12000 * 1.18 * 0.75 * 0.955) / 10500 ≈ 0.966 < 1.0
         severe = create_custom_scenario(
             name="Severe",
-            eth_price_change=-0.60,
-            steth_peg=0.80,
+            eth_price_change=-0.60,  # ignored for ETH-denominated position
+            steth_peg=0.75,
             utilization_shock=0.99,
         )
         result = apply_scenario(

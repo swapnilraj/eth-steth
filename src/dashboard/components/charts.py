@@ -78,8 +78,9 @@ def health_factor_gauge(hf: float) -> go.Figure:
         go.Indicator(
             mode="gauge+number",
             value=display_hf,
-            number={"suffix": "", "font": {"size": 48}},
-            title={"text": "Health Factor"},
+            number={"suffix": "", "font": {"size": 40}, "valueformat": ".2f"},
+            title={"text": "Health Factor", "font": {"size": 16}},
+            domain={"x": [0, 1], "y": [0.15, 1]},
             gauge={
                 "axis": {"range": [0, 3], "tickwidth": 1},
                 "bar": {"color": color},
@@ -99,7 +100,8 @@ def health_factor_gauge(hf: float) -> go.Figure:
 
     fig.update_layout(
         template="plotly_dark",
-        height=300,
+        height=350,
+        margin=dict(t=40, b=0, l=30, r=30),
     )
 
     return fig

@@ -15,11 +15,11 @@ if _env_path.exists():
             os.environ.setdefault(key.strip(), value.strip())
 
 from src.dashboard.components.sidebar import render_sidebar
-from src.dashboard.pages.liquidation import render_liquidation
-from src.dashboard.pages.overview import render_overview
-from src.dashboard.pages.rates import render_rates
-from src.dashboard.pages.simulations import render_simulations
-from src.dashboard.pages.stress_tests import render_stress_tests
+from src.dashboard.tabs.liquidation import render_liquidation
+from src.dashboard.tabs.overview import render_overview
+from src.dashboard.tabs.rates import render_rates
+from src.dashboard.tabs.simulations import render_simulations
+from src.dashboard.tabs.stress_tests import render_stress_tests
 from src.data.provider_factory import create_provider
 from src.position.vault_position import VaultPosition
 
@@ -53,14 +53,25 @@ def main() -> None:
         emode_enabled=params.emode_enabled,
     )
 
-    # If depeg is adjusted, we need a modified provider
-    # For simplicity, we monkey-patch the peg value
+    # If depeg is adjusted, scale the wstETH oracle price proportionally.
+    # The oracle price already includes the current peg, so to simulate a
+    # different peg we scale by (target_peg / current_peg).
     if params.depeg_level < 1.0:
-        original_peg = provider.get_steth_eth_peg
+        current_peg = provider.get_steth_eth_peg()
+        peg_scale = params.depeg_level / current_peg if current_peg > 0 else params.depeg_level
+        original_get_price = provider.get_asset_price
+        original_get_peg = provider.get_steth_eth_peg
+
+        def patched_price(asset: str) -> float:
+            price = original_get_price(asset)
+            if asset == "wstETH":
+                return price * peg_scale
+            return price
 
         def patched_peg() -> float:
             return params.depeg_level
 
+        provider.get_asset_price = patched_price  # type: ignore[assignment]
         provider.get_steth_eth_peg = patched_peg  # type: ignore[assignment]
 
     # Tabs

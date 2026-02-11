@@ -12,7 +12,8 @@ class CascadeConfig:
     """Configuration for a liquidation cascade simulation.
 
     Attributes:
-        initial_debt_to_liquidate: Starting debt amount to liquidate.
+        initial_debt_to_liquidate: Starting debt amount to liquidate (WETH).
+        collateral_price: wstETH/ETH price for debt→collateral conversion.
         liquidation_bonus: Fraction bonus for liquidators (e.g. 0.01 = 1%).
         rate_sensitivity: Fraction of debt that becomes at-risk per 1% rate increase.
         max_steps: Maximum cascade iterations.
@@ -20,6 +21,7 @@ class CascadeConfig:
     """
 
     initial_debt_to_liquidate: float
+    collateral_price: float = 1.18
     liquidation_bonus: float = 0.01
     rate_sensitivity: float = 0.05
     max_steps: int = 10
@@ -33,13 +35,24 @@ def simulate_cascade(
 ) -> CascadeResult:
     """Simulate an iterative liquidation cascade.
 
-    Each step: liquidate debt -> seize collateral -> update pool ->
-    recompute rate -> estimate new at-risk debt from rate increase -> repeat.
+    Models the WETH debt pool correctly: when debt is liquidated, the
+    liquidator repays WETH debt, so total_debt decreases but total_supply
+    (aToken supply) stays the same. Utilization = debt / supply drops,
+    and borrow rates fall.
+
+    Collateral seizure happens in the wstETH pool (separate) and is
+    converted using collateral_price for reporting, but does not affect
+    WETH pool utilization.
+
+    Cascade propagation comes from borrowers whose positions become
+    unhealthy due to rate changes or peg movements, not from the WETH
+    pool mechanics alone. The rate_sensitivity parameter models this
+    second-order effect as a heuristic.
 
     Does NOT mutate the input pool_state.
 
     Args:
-        pool_state: Current pool state snapshot.
+        pool_state: Current WETH pool state snapshot.
         rate_params: Interest rate curve parameters.
         config: Cascade configuration.
 
@@ -48,7 +61,7 @@ def simulate_cascade(
     """
     rate_model = InterestRateModel(rate_params)
 
-    # Work with copies
+    # Work with copies of the WETH pool
     supply = pool_state.total_supply
     debt = pool_state.total_debt
     prev_rate = rate_model.variable_borrow_rate(pool_state.utilization)
@@ -65,26 +78,31 @@ def simulate_cascade(
         if debt_to_liquidate > debt:
             debt_to_liquidate = debt
 
-        # Collateral seized = debt * (1 + bonus)
-        collateral_seized = debt_to_liquidate * (1.0 + config.liquidation_bonus)
+        # Collateral seized in wstETH terms:
+        # seized = (debt_repaid * (1 + bonus)) / collateral_price
+        collateral_seized = (
+            debt_to_liquidate * (1.0 + config.liquidation_bonus) / config.collateral_price
+        )
 
-        # Update pool state
+        # Update WETH pool: debt decreases, supply stays the same
+        # (repaid WETH returns to available liquidity within the pool)
         debt -= debt_to_liquidate
-        supply -= collateral_seized
-        if supply < 0:
-            supply = 0.0
 
         total_debt_liquidated += debt_to_liquidate
         total_collateral_seized += collateral_seized
 
-        # Recompute utilization and rate
-        total = supply + debt
-        utilization = debt / total if total > 0 else 0.0
+        # Recompute utilization: debt / supply (supply unchanged)
+        utilization = debt / supply if supply > 0 else 0.0
         new_rate = rate_model.variable_borrow_rate(utilization)
 
-        # Estimate new at-risk debt from rate increase
-        rate_increase_pct = (new_rate - prev_rate) * 100.0  # in percentage points
-        at_risk_debt = max(0.0, debt * config.rate_sensitivity * rate_increase_pct)
+        # Estimate new at-risk debt from rate change.
+        # After liquidation, WETH utilization drops → rates drop.
+        # But in a depeg scenario many positions become unhealthy
+        # simultaneously, so the cascade may still propagate.
+        # rate_sensitivity is a heuristic for this second-order effect.
+        rate_change_pct = (new_rate - prev_rate) * 100.0  # percentage points
+        # Only positive rate changes create new at-risk debt
+        at_risk_debt = max(0.0, debt * config.rate_sensitivity * rate_change_pct)
 
         steps.append(
             CascadeStep(
@@ -103,8 +121,7 @@ def simulate_cascade(
         debt_to_liquidate = at_risk_debt
 
     # Final state
-    total = supply + debt
-    final_util = debt / total if total > 0 else 0.0
+    final_util = debt / supply if supply > 0 else 0.0
     final_rate = rate_model.variable_borrow_rate(final_util)
 
     return CascadeResult(

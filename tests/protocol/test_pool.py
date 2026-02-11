@@ -23,16 +23,19 @@ def pool_model() -> PoolModel:
 
 class TestPoolState:
     def test_utilization(self) -> None:
+        # In Aave, total_supply = available_liquidity + total_debt
+        # so U = total_debt / total_supply
         state = PoolState(total_supply=800_000.0, total_debt=200_000.0)
-        # U = 200k / (800k + 200k) = 0.2
-        assert state.utilization == pytest.approx(0.2)
+        # U = 200k / 800k = 0.25
+        assert state.utilization == pytest.approx(0.25)
 
     def test_utilization_empty_pool(self) -> None:
         state = PoolState(total_supply=0.0, total_debt=0.0)
         assert state.utilization == 0.0
 
     def test_high_utilization(self) -> None:
-        state = PoolState(total_supply=100_000.0, total_debt=900_000.0)
+        state = PoolState(total_supply=1_000_000.0, total_debt=900_000.0)
+        # U = 900k / 1M = 0.9
         assert state.utilization == pytest.approx(0.9)
 
 
@@ -62,8 +65,7 @@ class TestPoolModel:
     def test_simulate_liquidation_impact(self, pool_model: PoolModel) -> None:
         result = pool_model.simulate_liquidation_impact(
             liquidated_debt=50_000.0,
-            seized_collateral_supply=52_500.0,  # 5% bonus
         )
-        # Both debt and supply decrease; net effect depends on amounts
-        assert "utilization_after" in result
+        # Debt repaid → utilization drops (supply stays the same)
+        assert result["utilization_after"] < result["utilization_before"]
         assert "borrow_rate_after" in result

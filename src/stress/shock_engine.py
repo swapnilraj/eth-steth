@@ -61,9 +61,11 @@ def apply_scenario(
     collateral_before = collateral_amount * collateral_price * current_peg
     hf_before = (collateral_before * liquidation_threshold) / debt_value if debt_value > 0 else float("inf")
 
-    # Apply stress: price change + peg change
-    stressed_price = collateral_price * (1.0 + scenario.eth_price_change)
-    collateral_after = collateral_amount * stressed_price * scenario.steth_peg
+    # Apply stress: only the peg matters for an ETH-denominated position.
+    # A USD move in ETH affects both collateral and debt equally (both are
+    # in ETH), so the health factor is unchanged. The only risk factor is
+    # the stETH/ETH peg deviation.
+    collateral_after = collateral_amount * collateral_price * scenario.steth_peg
 
     hf_after = (collateral_after * liquidation_threshold) / debt_value if debt_value > 0 else float("inf")
 
@@ -126,6 +128,6 @@ def generate_correlated_scenarios(
     result = np.empty_like(shocks)
     result[:, 0] = shocks[:, 0]  # ETH price change (fractional)
     result[:, 1] = np.clip(1.0 + shocks[:, 1], 0.01, 1.0)  # peg ratio
-    result[:, 2] = np.clip(0.44 + shocks[:, 2], 0.0, 1.0)  # utilization level
+    result[:, 2] = np.clip(0.78 + shocks[:, 2], 0.0, 1.0)  # utilization level
 
     return result

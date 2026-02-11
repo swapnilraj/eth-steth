@@ -10,7 +10,7 @@ from src.dashboard.components.charts import (
     rate_fan_chart,
     unwind_cost_breakdown_chart,
 )
-from src.data.constants import WETH
+from src.data.constants import WETH, WSTETH
 from src.data.interfaces import PoolDataProvider
 from src.position.unwind import (
     DEXPoolParams,
@@ -40,6 +40,14 @@ def render_simulations(
     weth_params = provider.get_reserve_params(WETH)
     u0 = weth_state.utilization
 
+    # wstETH supply APY for MC income
+    wsteth_params = provider.get_reserve_params(WSTETH)
+    wsteth_state = PoolState.from_reserve_state(provider.get_reserve_state(WSTETH))
+    wsteth_rate_model = InterestRateModel(wsteth_params)
+    wsteth_supply_apy = wsteth_rate_model.supply_rate(
+        wsteth_state.total_debt / wsteth_state.total_supply if wsteth_state.total_supply > 0 else 0.0
+    )
+
     # --- Section 1: Monte Carlo ---
     st.subheader("Monte Carlo Simulation")
 
@@ -63,6 +71,7 @@ def render_simulations(
         debt_value=debt_val,
         liquidation_threshold=liq_model.liquidation_threshold,
         staking_apy=staking_apy,
+        supply_apy=wsteth_supply_apy,
         optimal_utilization=weth_params.optimal_utilization,
         base_rate=weth_params.base_rate,
         slope1=weth_params.slope1,
@@ -137,8 +146,10 @@ def render_simulations(
             format="%.2f",
         )
 
+    wsteth_price = provider.get_asset_price(WSTETH)
     cascade_config = CascadeConfig(
         initial_debt_to_liquidate=init_debt,
+        collateral_price=wsteth_price,
         liquidation_bonus=liq_bonus,
         rate_sensitivity=rate_sens,
     )

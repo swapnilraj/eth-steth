@@ -68,18 +68,21 @@ class TestCascadeSimulation:
         step_sum = sum(s.debt_liquidated for s in result.steps)
         assert result.total_debt_liquidated == pytest.approx(step_sum)
 
-    def test_collateral_seized_includes_bonus(
+    def test_collateral_seized_includes_bonus_and_price(
         self, pool_state: PoolState, rate_params: InterestRateParams
     ) -> None:
+        """Collateral seized = debt * (1 + bonus) / collateral_price."""
+        collateral_price = 1.18
         config = CascadeConfig(
             initial_debt_to_liquidate=100_000.0,
+            collateral_price=collateral_price,
             liquidation_bonus=0.05,
             rate_sensitivity=0.0,
         )
         result = simulate_cascade(pool_state, rate_params, config)
         assert len(result.steps) == 1
         step = result.steps[0]
-        expected = 100_000.0 * 1.05
+        expected = 100_000.0 * 1.05 / collateral_price
         assert step.collateral_seized == pytest.approx(expected)
 
     def test_cascade_reduces_debt(
@@ -95,16 +98,28 @@ class TestCascadeSimulation:
         if result.steps:
             assert result.steps[-1].total_debt < pool_state.total_debt
 
-    def test_utilization_changes_after_cascade(
+    def test_supply_unchanged_after_liquidation(
         self, pool_state: PoolState, rate_params: InterestRateParams
     ) -> None:
+        """In the WETH pool, supply stays the same after liquidation
+        (repaid debt returns to available liquidity)."""
         config = CascadeConfig(
             initial_debt_to_liquidate=100_000.0,
             rate_sensitivity=0.0,
         )
         result = simulate_cascade(pool_state, rate_params, config)
-        # After liquidation, utilization should change
-        assert result.final_utilization != pytest.approx(pool_state.utilization)
+        assert result.steps[0].total_supply == pool_state.total_supply
+
+    def test_utilization_drops_after_liquidation(
+        self, pool_state: PoolState, rate_params: InterestRateParams
+    ) -> None:
+        """Liquidation repays debt → utilization drops in the WETH pool."""
+        config = CascadeConfig(
+            initial_debt_to_liquidate=100_000.0,
+            rate_sensitivity=0.0,
+        )
+        result = simulate_cascade(pool_state, rate_params, config)
+        assert result.final_utilization < pool_state.utilization
 
     def test_small_debt_below_threshold_no_cascade(
         self, pool_state: PoolState, rate_params: InterestRateParams

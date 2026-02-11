@@ -16,25 +16,15 @@ class VaultPosition:
     debt_amount: float  # WETH amount
     emode_enabled: bool = True
 
-    @property
-    def leverage(self) -> float:
-        """Compute leverage ratio: collateral / (collateral - debt) in ETH terms.
-
-        Note: this is approximate since collateral is in wstETH and debt is in WETH.
-        For exact leverage we'd need the wstETH/ETH price.
-        """
-        if self.collateral_amount <= 0:
-            return 0.0
-        # Simplified — will be refined when we have price context
-        return self.collateral_amount / max(
-            self.collateral_amount - self.debt_amount, 1e-18
-        )
-
     def collateral_value(self, provider: PoolDataProvider) -> float:
-        """Collateral value in ETH."""
+        """Collateral value in ETH.
+
+        The Aave oracle price for wstETH already incorporates the stETH/ETH
+        peg and the wstETH→stETH exchange rate, so we must NOT multiply by
+        the peg again.
+        """
         price = provider.get_asset_price(WSTETH)
-        peg = provider.get_steth_eth_peg()
-        return self.collateral_amount * price * peg
+        return self.collateral_amount * price
 
     def debt_value(self, provider: PoolDataProvider) -> float:
         """Debt value in ETH."""
