@@ -61,14 +61,20 @@ def compute_var_from_scenarios(
     collateral_value: float = 0.0,
     debt_value: float = 0.0,
     liquidation_threshold: float = 0.955,
+    stressed_collateral_array: np.ndarray | None = None,
+    stressed_debt_array: np.ndarray | None = None,
 ) -> VaRResult:
     """Compute VaR from an array of scenario P&L values.
 
     Args:
         pnl_array: 1D array of P&L outcomes from correlated scenarios.
-        collateral_value: Current collateral value (for liquidation check).
-        debt_value: Current debt value (for liquidation check).
+        collateral_value: Current collateral value (fallback for liquidation check).
+        debt_value: Current debt value (fallback for liquidation check).
         liquidation_threshold: Liquidation threshold (e.g. 0.955 for E-mode).
+        stressed_collateral_array: Per-scenario stressed collateral values.
+            If provided, used for accurate HF-based liquidation probability.
+        stressed_debt_array: Per-scenario stressed debt values.
+            If provided, used for accurate HF-based liquidation probability.
 
     Returns:
         VaRResult with risk metrics.
@@ -84,9 +90,13 @@ def compute_var_from_scenarios(
 
     max_loss = float(np.min(pnl_array))
 
-    # Liquidation probability: fraction of scenarios where
-    # HF = ((collateral + pnl) * liq_threshold) / debt < 1.0
-    if collateral_value > 0 and debt_value > 0:
+    # Liquidation probability: HF = (collateral * threshold) / debt < 1.0
+    # Use per-scenario arrays if provided (proper separation of collateral
+    # and debt), otherwise fall back to adding P&L to collateral.
+    if stressed_collateral_array is not None and stressed_debt_array is not None:
+        hf_array = (stressed_collateral_array * liquidation_threshold) / stressed_debt_array
+        liquidation_prob = float(np.mean(hf_array < 1.0))
+    elif collateral_value > 0 and debt_value > 0:
         stressed_collateral = collateral_value + pnl_array
         hf_array = (stressed_collateral * liquidation_threshold) / debt_value
         liquidation_prob = float(np.mean(hf_array < 1.0))

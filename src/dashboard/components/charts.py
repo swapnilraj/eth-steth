@@ -251,30 +251,16 @@ def pnl_distribution_histogram(mc_result: MonteCarloResult) -> go.Figure:
 
 def liquidation_probability_chart(mc_result: MonteCarloResult) -> go.Figure:
     """Cumulative liquidation fraction over time."""
-    n_paths = mc_result.pnl_paths.shape[0]
-    n_steps = mc_result.pnl_paths.shape[1]
+    n_paths = mc_result.hf_paths.shape[0]
+    n_steps = mc_result.hf_paths.shape[1]
     days = mc_result.timesteps
 
-    # For each time step, compute fraction of paths that have been liquidated by then
-    # Use the same threshold as in monte_carlo.py
-    equity = mc_result.pnl_paths[:, 0]  # Not exactly right, but we use liquidated flag
-    # Simpler: use cumulative min P&L to detect "ever liquidated by time t"
-    cum_min_pnl = np.minimum.accumulate(mc_result.pnl_paths, axis=1)
+    # Use HF paths directly: a path is "liquidated by time t" if HF < 1.0
+    # at any step up to t. Compute cumulative minimum HF per path.
+    cum_min_hf = np.minimum.accumulate(mc_result.hf_paths, axis=1)
 
-    # If any path's P&L ever drops below the terminal check, count it
-    # For simplicity, use fraction of liquidated paths that triggered by each step
-    # We'll approximate by checking each step
-    liq_fraction = np.zeros(n_steps)
-    if np.any(mc_result.liquidated):
-        # Find first liquidation time per path
-        for t in range(n_steps):
-            # Paths liquidated by step t: cumulative
-            liq_by_t = np.sum(mc_result.liquidated & (cum_min_pnl[:, t] <= cum_min_pnl[:, -1]))
-            liq_fraction[t] = liq_by_t / n_paths
-        # Ensure monotonically non-decreasing
-        liq_fraction = np.maximum.accumulate(liq_fraction)
-    else:
-        liq_fraction = np.zeros(n_steps)
+    # Fraction of paths where cum_min_hf has dropped below 1.0 by each step
+    liq_fraction = np.mean(cum_min_hf < 1.0, axis=0)
 
     fig = go.Figure()
 

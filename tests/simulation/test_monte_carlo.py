@@ -80,6 +80,7 @@ class TestRunMonteCarlo:
         assert mc.pnl_paths.shape == (50, 30)
         assert mc.terminal_pnl.shape == (50,)
         assert mc.liquidated.shape == (50,)
+        assert mc.hf_paths.shape == (50, 30)
         assert mc.timesteps.shape == (30,)
 
     def test_deterministic(self) -> None:

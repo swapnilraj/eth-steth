@@ -174,5 +174,6 @@ def run_monte_carlo(
         pnl_paths=pnl_paths,
         terminal_pnl=terminal_pnl,
         liquidated=liquidated,
+        hf_paths=hf_paths,
         timesteps=timesteps,
     )

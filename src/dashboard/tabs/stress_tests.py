@@ -14,10 +14,10 @@ from src.data.interfaces import PoolDataProvider
 from src.position.vault_position import VaultPosition
 from src.protocol.pool import PoolState
 from src.protocol.interest_rate import InterestRateModel
-from src.simulation.monte_carlo import OUParams, run_monte_carlo
+from src.simulation.monte_carlo import run_monte_carlo
 from src.stress.scenarios import HISTORICAL_SCENARIOS, create_custom_scenario
 from src.stress.shock_engine import apply_scenario, generate_correlated_scenarios
-from src.stress.var import VaRResult, compute_var, compute_var_from_scenarios
+from src.stress.var import compute_var, compute_var_from_scenarios
 
 
 def render_stress_tests(
@@ -36,6 +36,11 @@ def render_stress_tests(
     oracle_price = provider.get_asset_price(WSTETH)
     collateral_price = oracle_price / current_peg if current_peg > 0 else oracle_price
     liq_model = position.get_liquidation_model(provider)
+
+    # Shared rate model for borrow cost calculations
+    weth_state = PoolState.from_reserve_state(provider.get_reserve_state(WETH))
+    weth_params = provider.get_reserve_params(WETH)
+    weth_rate_model = InterestRateModel(weth_params)
 
     # --- Section 1: Historical Scenarios ---
     st.subheader("Historical Stress Scenarios")
@@ -59,17 +64,23 @@ def render_stress_tests(
         hf_befores.append(shock.hf_before)
         hf_afters.append(shock.hf_after)
 
-    # Scenario table
+    # Scenario table — include borrow cost from utilization spike over duration
     rows = []
     for scenario, shock in zip(HISTORICAL_SCENARIOS, results):
+        stressed_rate = weth_rate_model.variable_borrow_rate(scenario.utilization_shock)
+        borrow_cost = debt_val * stressed_rate * (scenario.duration_days / 365.0)
+        staking_income = collateral_val * staking_apy * (scenario.duration_days / 365.0)
+        full_pnl = shock.pnl_impact + staking_income - borrow_cost
         rows.append({
             "Scenario": scenario.name,
-            "ETH Change": f"{scenario.eth_price_change*100:+.0f}%",
             "stETH Peg": f"{scenario.steth_peg:.2f}",
             "Utilization": f"{scenario.utilization_shock*100:.0f}%",
+            "Duration": f"{scenario.duration_days}d",
             "HF Before": f"{shock.hf_before:.3f}",
             "HF After": f"{shock.hf_after:.3f}",
-            "P&L Impact": f"{shock.pnl_impact:,.0f} ETH",
+            "Peg P&L": f"{shock.pnl_impact:,.0f} ETH",
+            "Borrow Cost": f"{-borrow_cost:,.0f} ETH",
+            "Total P&L": f"{full_pnl:,.0f} ETH",
             "Liquidated": "Yes" if shock.is_liquidated else "No",
         })
     st.table(pd.DataFrame(rows))
@@ -134,6 +145,11 @@ def render_stress_tests(
         current_peg=current_peg,
     )
 
+    custom_stressed_rate = weth_rate_model.variable_borrow_rate(custom_util)
+    custom_borrow_cost = debt_val * custom_stressed_rate * (int(custom_days) / 365.0)
+    custom_staking_income = collateral_val * staking_apy * (int(custom_days) / 365.0)
+    custom_full_pnl = custom_result.pnl_impact + custom_staking_income - custom_borrow_cost
+
     cr_col1, cr_col2, cr_col3, cr_col4 = st.columns(4)
     with cr_col1:
         st.metric("HF Before", f"{custom_result.hf_before:.3f}")
@@ -141,7 +157,7 @@ def render_stress_tests(
         delta_hf = custom_result.hf_after - custom_result.hf_before
         st.metric("HF After", f"{custom_result.hf_after:.3f}", f"{delta_hf:+.3f}")
     with cr_col3:
-        st.metric("P&L Impact", f"{custom_result.pnl_impact:,.0f} ETH")
+        st.metric("Total P&L", f"{custom_full_pnl:,.0f} ETH")
     with cr_col4:
         if custom_result.is_liquidated:
             st.error("LIQUIDATED")
@@ -152,9 +168,6 @@ def render_stress_tests(
 
     # --- Section 3: VaR / Tail Risk from Monte Carlo ---
     st.subheader("Value at Risk (Monte Carlo)")
-
-    weth_state = PoolState.from_reserve_state(provider.get_reserve_state(WETH))
-    weth_params = provider.get_reserve_params(WETH)
 
     # wstETH supply APY for MC income
     wsteth_params = provider.get_reserve_params(WSTETH)
@@ -218,25 +231,31 @@ def render_stress_tests(
     # collateral and debt are in ETH). The risk factors that matter are:
     #   1) stETH/ETH peg deviation (affects collateral value)
     #   2) utilization shock (affects borrow rate → cost)
-    weth_rate_model = InterestRateModel(weth_params)
-    corr_pnl = np.empty(len(corr_scenarios))
+    n_corr_int = len(corr_scenarios)
+    corr_pnl = np.empty(n_corr_int)
+    corr_stressed_coll = np.empty(n_corr_int)
+    corr_stressed_debt = np.empty(n_corr_int)
     horizon_days = 30  # assume 30-day stress horizon
     for i, shock_vec in enumerate(corr_scenarios):
         _eth_change, peg, util = shock_vec
-        # Collateral impact: only peg matters (ETH price change is irrelevant)
-        stressed_collateral = position.collateral_amount * collateral_price * peg
-        collateral_pnl = stressed_collateral - collateral_val
-        # Borrow cost impact from utilization shock
+        # Collateral: peg shock + staking income over horizon
+        stressed_coll = position.collateral_amount * collateral_price * peg
+        staking_income = stressed_coll * staking_apy * (horizon_days / 365.0)
+        coll_end = stressed_coll + staking_income
+        # Debt: grows with stressed borrow rate over horizon
         stressed_rate = weth_rate_model.variable_borrow_rate(util)
-        borrow_cost = debt_val * stressed_rate * (horizon_days / 365.0)
-        staking_income = collateral_val * staking_apy * (horizon_days / 365.0)
-        corr_pnl[i] = collateral_pnl + staking_income - borrow_cost
+        debt_end = debt_val * (1.0 + stressed_rate * horizon_days / 365.0)
+        corr_stressed_coll[i] = coll_end
+        corr_stressed_debt[i] = debt_end
+        corr_pnl[i] = (coll_end - debt_end) - (collateral_val - debt_val)
 
     corr_var = compute_var_from_scenarios(
         corr_pnl,
         collateral_value=collateral_val,
         debt_value=debt_val,
         liquidation_threshold=liq_model.liquidation_threshold,
+        stressed_collateral_array=corr_stressed_coll,
+        stressed_debt_array=corr_stressed_debt,
     )
 
     cv_col1, cv_col2, cv_col3 = st.columns(3)

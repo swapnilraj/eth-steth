@@ -15,6 +15,7 @@ class MonteCarloResult:
         pnl_paths: (n_paths, n_steps) array of cumulative P&L over time.
         terminal_pnl: (n_paths,) array of final P&L per path.
         liquidated: (n_paths,) boolean array — True if path hit liquidation.
+        hf_paths: (n_paths, n_steps) array of health factor over time.
         timesteps: (n_steps,) array of time in days.
     """
 
@@ -23,6 +24,7 @@ class MonteCarloResult:
     pnl_paths: np.ndarray
     terminal_pnl: np.ndarray
     liquidated: np.ndarray
+    hf_paths: np.ndarray
     timesteps: np.ndarray
 
 

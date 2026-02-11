@@ -98,6 +98,33 @@ This repo aims to mirror Aave V3 + the Mellow vault mechanics, but several core 
 - **Impact:** All simulations and correlated scenarios use a mean utilization that's ~half the correct value.
 - **Status:** Fixed.
 
+## 13. Liquidation Probability Chart Broken After MC Rewrite
+
+- **Code:** `src/dashboard/components/charts.py:252-303`
+- **Issue:** The cumulative liquidation chart used `np.minimum.accumulate(mc_result.pnl_paths)` to detect when each path was first "liquidated." After the MC rewrite (bug #4), P&L = equity − initial_equity, which is typically monotonically decreasing when borrow rates exceed income. So the cumulative min of P&L equals the P&L itself at each step, and the condition `cum_min_pnl[:, t] <= cum_min_pnl[:, -1]` only becomes true at the final timestep.
+- **Why it is wrong:** The chart showed all liquidation events occurring on the very last day, regardless of when HF actually dropped below 1.0. The P&L-based proxy was designed for the old model where P&L directly drove liquidation detection. After the rewrite, liquidation is detected via HF = (collateral × threshold) / debt < 1.0, but `hf_paths` was not stored in `MonteCarloResult`, so the chart had no way to reconstruct the actual timing.
+- **Impact:** The "Cumulative Liquidation Probability" chart was visually meaningless — it appeared as a flat line that jumped to the final probability on the last day.
+- **Fix:** Added `hf_paths` to `MonteCarloResult`. Chart now uses `np.minimum.accumulate(mc_result.hf_paths)` and checks `cum_min_hf < 1.0` at each step, accurately showing when each path first breaches the liquidation threshold.
+- **Status:** Fixed.
+
+## 14. Historical Scenario P&L Ignores Borrow Cost and Utilization Shock
+
+- **Code:** `src/stress/shock_engine.py:68-72`, `src/dashboard/tabs/stress_tests.py:48-75`
+- **Issue:** `apply_scenario` computes `pnl_impact = collateral_after - collateral_before`, capturing only the instantaneous collateral change from the peg shock. The `utilization_shock` and `duration_days` fields on `StressScenario` are defined and displayed in the scenario table but have no effect on P&L or HF.
+- **Why it is wrong:** During the June 2022 scenario, utilization spiked to 0.95 (above the 0.92 kink), pushing the borrow rate to ~17.7%. Over 14 days, this costs `10,500 × 0.177 × 14/365 ≈ 71 ETH` in borrow interest — a non-trivial amount that was completely omitted. The displayed "P&L Impact" understated the actual loss.
+- **Impact:** Historical and custom scenarios showed misleadingly small losses. The utilization and duration columns in the table were decorative — they had no effect on any computed metric.
+- **Fix:** The dashboard now computes the full period P&L: `peg_P&L + staking_income − borrow_cost`, where `borrow_cost = debt × stressed_borrow_rate(utilization_shock) × duration/365`. Both historical and custom scenario displays now reflect the complete P&L including borrow costs.
+- **Status:** Fixed.
+
+## 15. Correlated VaR Liquidation Check Mixes P&L into Collateral
+
+- **Code:** `src/stress/var.py:89-92`, `src/dashboard/tabs/stress_tests.py:246-252`
+- **Issue:** `compute_var_from_scenarios` computed liquidation as `HF = ((collateral + pnl) × threshold) / debt`. The `pnl` includes both collateral-side changes (peg) *and* debt-side costs (borrow rate). Adding borrow cost to the collateral side rather than the debt side gives incorrect HF values.
+- **Why it is wrong:** HF = (stressed_collateral × threshold) / stressed_debt. Borrow cost increases debt, it does not decrease collateral. The previous formula was `((coll + coll_change + income − borrow_cost) × threshold) / debt`, but correct is `((coll + coll_change + income) × threshold) / (debt + borrow_cost)`. For positive-equity positions, the old formula overestimated HF, underestimating liquidation probability.
+- **Impact:** The correlated VaR's liquidation probability was slightly optimistic. For borderline cases near HF = 1.0, this could be the difference between reporting "safe" and "liquidatable."
+- **Fix:** `compute_var_from_scenarios` now accepts optional `stressed_collateral_array` and `stressed_debt_array` for proper per-scenario HF computation. The correlated scenario loop in the dashboard now tracks stressed collateral and debt separately and passes both arrays. Backward compatible — falls back to the old method if arrays are not provided.
+- **Status:** Fixed.
+
 ---
 
-Fixing all twelve items is necessary before the dashboard can be considered a faithful reproduction of the Aave pool and the Mellow vault strategy.
+Fixing all fifteen items is necessary before the dashboard can be considered a faithful reproduction of the Aave pool and the Mellow vault strategy.
