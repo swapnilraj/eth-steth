@@ -173,4 +173,36 @@ This repo aims to mirror Aave V3 + the Mellow vault mechanics, but several core 
 
 ---
 
+## 30. Monte Carlo Horizon Bug Still Present
+
+- **Code:** `src/simulation/monte_carlo.py:131-189`
+- **Issue:** `n_steps = horizon_days` and the Euler loop runs `for t in range(1, n_steps)`, so a 365-day run accrues only 364 daily periods. The final day's staking income and borrow interest are never applied.
+- **Impact:** All Monte Carlo outputs (P&L, VaR, liquidation timing) are biased short of the requested horizon. (**Status:** Fixed in #25 — `n_steps = horizon_days + 1`.)
+
+## 31. Supply Rate Still Uses Unclamped Utilization
+
+- **Code:** `src/protocol/interest_rate.py:52-66`
+- **Issue:** `supply_rate` multiplies the borrow rate by the raw utilization argument, which can exceed 1.0 when the "borrow impact" what-if borrows more than the pool supply. This produces supply APYs greater than borrow APYs, which is impossible on Aave.
+- **Impact:** Rate tables can display non-physical supply rates when utilization >100%. (**Status:** Fixed in #26 — utilization clamped to [0, 1] in `supply_rate`.)
+
+## 32. Daily P&L Still Zeroes Out When Equity ≤ 0
+
+- **Code:** `src/position/pnl.py:53-86`
+- **Issue:** `daily_pnl()` still returns 0.0 whenever equity is non-positive, even though the position continues to accrue borrow interest.
+- **Impact:** The dashboard hides ongoing losses after equity is wiped. (**Status:** Fixed in #28 — `daily_pnl` now computes `(income - cost) / 365.25` directly.)
+
+## 33. Monte Carlo Seed Hard-Coded to 42
+
+- **Code:** `src/dashboard/tabs/simulations.py:73-110`, `src/dashboard/tabs/stress_tests.py:174-210`
+- **Issue:** Both tabs always pass `seed=42` to Monte Carlo helpers; the Stress Tests tab provides no way to change it.
+- **Impact:** Probabilistic outputs never change between runs, undermining Monte Carlo sampling. (**Status:** Fixed in #29 — stress tests tab now exposes seed inputs for VaR MC and correlated scenarios.)
+
+## 34. Depeg Scenario Table Ignores Current Peg
+
+- **Code:** `src/dashboard/tabs/liquidation.py:95-114`
+- **Issue:** The table always evaluates peg ratios `[1.00 … 0.85]` relative to a perfect-peg baseline, even when the current peg (from on-chain data or the slider) is already below 1.0. The first row can therefore show a "1.00" peg that no longer exists.
+- **Impact:** Users operating during an existing depeg see overstated safety margins. (**Status:** Fixed — scenarios now start from the current peg and step down, so the table never shows a rate factor above what currently exists.)
+
+---
+
 All issues are fixed.

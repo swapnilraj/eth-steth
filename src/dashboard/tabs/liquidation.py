@@ -96,7 +96,18 @@ def render_liquidation(
     st.divider()
     st.subheader("Exchange Rate Scenarios")
 
-    scenarios = [1.0, 0.99, 0.98, 0.97, 0.96, 0.95, 0.93, 0.90, 0.85]
+    # Build scenarios relative to the current peg so the table never
+    # shows a rate factor above what actually exists.
+    base = round(current_peg, 2)
+    scenarios = sorted(
+        {base}
+        | {round(base - i * 0.01, 2) for i in range(1, 6)}
+        | {round(base - 0.07, 2), round(base - 0.10, 2), round(base - 0.15, 2)},
+        reverse=True,
+    )
+    # Drop any scenarios that dipped below 0
+    scenarios = [p for p in scenarios if p > 0]
+
     rows = []
     for peg in scenarios:
         adj_collateral = position.collateral_amount * wsteth_exchange_rate * peg
