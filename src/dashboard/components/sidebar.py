@@ -73,12 +73,17 @@ def render_sidebar() -> SidebarParams:
         )
 
     depeg = st.sidebar.slider(
-        "stETH/ETH Peg",
+        "wstETH Exchange Rate Factor",
         min_value=0.85,
         max_value=1.00,
         value=1.00,
         step=0.005,
         format="%.3f",
+    )
+    st.sidebar.caption(
+        "Models a reduction in wstETH's protocol exchange rate "
+        "(e.g. Lido slashing). Aave V3 uses a hardcoded 1:1 stETH/ETH "
+        "oracle, so secondary-market depegs do not affect health factors."
     )
 
     staking_apy = st.sidebar.slider(

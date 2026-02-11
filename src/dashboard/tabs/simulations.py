@@ -147,10 +147,10 @@ def render_simulations(
         depeg_sens = st.number_input(
             "Depeg Sensitivity",
             min_value=0.0,
-            max_value=0.50,
-            value=0.10,
-            step=0.01,
-            format="%.2f",
+            max_value=20.0,
+            value=5.0,
+            step=0.5,
+            format="%.1f",
         )
 
     wsteth_price = provider.get_asset_price(WSTETH)

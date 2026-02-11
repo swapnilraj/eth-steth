@@ -156,15 +156,29 @@ def run_monte_carlo(
         daily_borrow_rate = rate_paths[:, t - 1] / 365.0
         debt_paths[:, t] = debt_paths[:, t - 1] * (1.0 + daily_borrow_rate)
 
+    # Liquidation detection: HF = (collateral * liq_threshold) / debt < 1.0
+    hf_paths = (collateral_paths * liquidation_threshold) / debt_paths
+    liquidated = np.any(hf_paths < 1.0, axis=1)
+
+    # Freeze balances at first liquidation timestep.
+    # In Aave, once liquidated the position is (partially) closed —
+    # balances should not keep accruing interest/income afterwards.
+    if np.any(liquidated):
+        hf_below = hf_paths < 1.0
+        first_liq_step = np.argmax(hf_below, axis=1)
+        liq_indices = np.where(liquidated)[0]
+        for i in liq_indices:
+            t = first_liq_step[i]
+            collateral_paths[i, t:] = collateral_paths[i, t]
+            debt_paths[i, t:] = debt_paths[i, t]
+        # Recompute HF from frozen paths
+        hf_paths = (collateral_paths * liquidation_threshold) / debt_paths
+
     # P&L = equity change from initial
     equity_paths = collateral_paths - debt_paths
     initial_equity = collateral_value - debt_value
     pnl_paths = equity_paths - initial_equity
     terminal_pnl = pnl_paths[:, -1]
-
-    # Liquidation detection: HF = (collateral * liq_threshold) / debt < 1.0
-    hf_paths = (collateral_paths * liquidation_threshold) / debt_paths
-    liquidated = np.any(hf_paths < 1.0, axis=1)
 
     timesteps = np.arange(n_steps, dtype=float)
 

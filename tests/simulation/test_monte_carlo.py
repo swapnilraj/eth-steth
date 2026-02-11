@@ -125,6 +125,35 @@ class TestRunMonteCarlo:
         )
         assert mc.liquidated.dtype == bool
 
+    def test_liquidated_paths_frozen_after_breach(self) -> None:
+        """Once HF < 1.0, balances should not keep changing."""
+        # Use very high utilization to force some liquidations
+        mc = run_monte_carlo(
+            u0=0.96,
+            collateral_value=11000.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            ou_params=OUParams(theta=0.96, kappa=10.0, sigma=0.02),
+            n_paths=500,
+            horizon_days=365,
+            seed=42,
+        )
+        if not np.any(mc.liquidated):
+            pytest.skip("No liquidations occurred — adjust test parameters")
+        # For liquidated paths, P&L should be constant after the breach
+        liq_indices = np.where(mc.liquidated)[0]
+        hf_below = mc.hf_paths < 1.0
+        first_liq_step = np.argmax(hf_below, axis=1)
+        for i in liq_indices:
+            t = first_liq_step[i]
+            if t < mc.pnl_paths.shape[1] - 1:
+                # All post-liquidation P&L values should be identical
+                post_liq_pnl = mc.pnl_paths[i, t:]
+                assert np.all(post_liq_pnl == post_liq_pnl[0]), (
+                    f"Path {i}: P&L changed after liquidation at step {t}"
+                )
+
     def test_high_utilization_more_costly(self) -> None:
         """Higher starting utilization should generally lead to worse P&L."""
         mc_low = run_monte_carlo(

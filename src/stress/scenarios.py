@@ -7,11 +7,19 @@ from dataclasses import dataclass
 class StressScenario:
     """A stress scenario with correlated market shocks.
 
+    Note on Aave V3 oracle: Aave V3 prices wstETH using a hardcoded
+    1:1 stETH/ETH ratio multiplied by the Lido protocol exchange rate
+    (stEthPerToken).  Secondary-market stETH depegs do NOT affect the
+    oracle.  The ``steth_peg`` field therefore models a reduction in the
+    protocol exchange rate (e.g. from a Lido slashing event), not a
+    secondary-market depeg.  Historical scenarios use market-depeg
+    magnitudes as representative "what-if" stress levels.
+
     Attributes:
         name: Short identifier.
         description: Human-readable explanation.
         eth_price_change: Fractional ETH price change (e.g. -0.40 = -40%).
-        steth_peg: stETH/ETH peg ratio under stress (e.g. 0.93).
+        steth_peg: wstETH exchange rate factor under stress (e.g. 0.93).
         utilization_shock: Absolute utilization level under stress (e.g. 0.95).
         duration_days: Duration of the stress period.
     """

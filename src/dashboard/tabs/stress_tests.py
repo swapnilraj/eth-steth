@@ -73,12 +73,12 @@ def render_stress_tests(
         full_pnl = shock.pnl_impact + staking_income - borrow_cost
         rows.append({
             "Scenario": scenario.name,
-            "stETH Peg": f"{scenario.steth_peg:.2f}",
+            "Rate Factor": f"{scenario.steth_peg:.2f}",
             "Utilization": f"{scenario.utilization_shock*100:.0f}%",
             "Duration": f"{scenario.duration_days}d",
             "HF Before": f"{shock.hf_before:.3f}",
             "HF After": f"{shock.hf_after:.3f}",
-            "Peg P&L": f"{shock.pnl_impact:,.0f} ETH",
+            "Rate P&L": f"{shock.pnl_impact:,.0f} ETH",
             "Borrow Cost": f"{-borrow_cost:,.0f} ETH",
             "Total P&L": f"{full_pnl:,.0f} ETH",
             "Liquidated": "Yes" if shock.is_liquidated else "No",
@@ -95,14 +95,15 @@ def render_stress_tests(
 
     st.caption(
         "ETH/USD price changes do not affect an ETH-denominated position's health factor "
-        "(both collateral and debt move equally). Only the stETH/ETH peg, utilization, "
-        "and duration matter."
+        "(both collateral and debt move equally). The exchange rate factor models a "
+        "reduction in wstETH's protocol rate (e.g. Lido slashing). Aave V3 uses a "
+        "hardcoded 1:1 stETH/ETH oracle, so only protocol-level events affect HF."
     )
 
     cs_col1, cs_col2, cs_col3 = st.columns(3)
     with cs_col1:
         custom_peg = st.slider(
-            "stETH/ETH Peg",
+            "Exchange Rate Factor",
             min_value=0.80,
             max_value=1.00,
             value=0.95,

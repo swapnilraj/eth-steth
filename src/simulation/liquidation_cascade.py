@@ -22,9 +22,9 @@ class CascadeConfig:
         liquidation_bonus: Fraction bonus for liquidators (e.g. 0.01 = 1%).
         price_impact_per_unit: Fractional peg drop per unit of wstETH sold.
             E.g. 0.00001 means selling 10,000 wstETH drops the peg by 10%.
-        depeg_sensitivity: Fraction of remaining debt that becomes at-risk
-            per 1% further depeg.  E.g. 0.10 means a 1% depeg puts 10% of
-            outstanding debt at risk of liquidation.
+        depeg_sensitivity: Multiplier converting a fractional peg drop into
+            the fraction of remaining debt that becomes at-risk.  E.g. 5.0
+            means a 10% peg drop puts 50% of debt at risk (5.0 × 0.10).
         max_steps: Maximum cascade iterations.
         min_debt_threshold: Stop cascade when at-risk debt falls below this.
     """
@@ -33,7 +33,7 @@ class CascadeConfig:
     collateral_price: float = 1.18
     liquidation_bonus: float = 0.01
     price_impact_per_unit: float = 0.00001
-    depeg_sensitivity: float = 0.10
+    depeg_sensitivity: float = 5.0
     max_steps: int = 10
     min_debt_threshold: float = 100.0
 
@@ -93,20 +93,21 @@ def simulate_cascade(
         total_debt_liquidated += debt_to_liquidate
         total_collateral_seized += collateral_seized
 
-        # Price impact: selling seized wstETH depresses the peg
-        peg_drop = collateral_seized * config.price_impact_per_unit
+        # Price impact: selling seized wstETH depresses the peg.
+        # Clamp to 99% max drop per step to prevent negative prices.
+        peg_drop = min(collateral_seized * config.price_impact_per_unit, 0.99)
         collateral_price = collateral_price * (1.0 - peg_drop)
         if collateral_price < 0.01:
-            collateral_price = 0.01  # floor
+            collateral_price = 0.01  # floor for numerical stability
 
         # Recompute WETH utilization and rate
         utilization = debt / supply if supply > 0 else 0.0
         new_rate = rate_model.variable_borrow_rate(utilization)
 
         # At-risk debt: fraction of remaining debt that becomes unhealthy
-        # due to the further depeg.  depeg_sensitivity = fraction per 1% depeg.
-        depeg_pct = peg_drop * 100.0
-        at_risk_debt = max(0.0, debt * config.depeg_sensitivity * depeg_pct)
+        # due to the further depeg.
+        # at_risk = debt × depeg_sensitivity × peg_drop  (all fractional)
+        at_risk_debt = max(0.0, debt * config.depeg_sensitivity * peg_drop)
 
         steps.append(
             CascadeStep(

@@ -53,9 +53,10 @@ def main() -> None:
         emode_enabled=params.emode_enabled,
     )
 
-    # If depeg is adjusted, scale the wstETH oracle price proportionally.
-    # The oracle price already includes the current peg, so to simulate a
-    # different peg we scale by (target_peg / current_peg).
+    # If exchange rate factor is adjusted, scale the wstETH oracle price
+    # proportionally.  This models a Lido slashing event reducing
+    # stEthPerToken.  The oracle price already includes the current rate,
+    # so we scale by (target / current).
     if params.depeg_level < 1.0:
         current_peg = provider.get_steth_eth_peg()
         peg_scale = params.depeg_level / current_peg if current_peg > 0 else params.depeg_level

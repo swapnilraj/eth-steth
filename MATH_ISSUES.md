@@ -74,54 +74,67 @@ This repo aims to mirror Aave V3 + the Mellow vault mechanics, but several core 
 - **Issue:** Defaults baked in the wrong 0.44 utilization even after pool math was fixed, biasing simulations toward low rates.
 - **Impact:** Monte Carlo and correlated scenarios centred on a false baseline. (**Status:** Fixed.)
 
-## 13. Liquidation Cascade Can No Longer Cascade
+## 13. Peg Shocks Are Applied Directly to the Aave Oracle
 
-- **Code:** `src/simulation/liquidation_cascade.py:73-121`
-- **Issue:** After fixing the WETH pool mechanics, every liquidation *reduces* rates, so `rate_change_pct` is ≤ 0 and `at_risk_debt = max(0, ...)` becomes zero in the first loop iteration. The "cascade" always stops after one step.
-- **Impact:** Dashboard promises cascade analysis, but it is impossible to get more than a single step regardless of inputs.
-- **Fix:** Redesigned cascade to be driven by **price impact** instead of rate changes. Selling seized wstETH depresses the peg → more positions breach HF → new at-risk debt. Replaced `rate_sensitivity` with `price_impact_per_unit` and `depeg_sensitivity` parameters. The cascade now correctly propagates through the peg-impact feedback loop.
-- **Status:** Fixed.
+- **Code:** `src/protocol/liquidation.py:33-134`, `src/stress/shock_engine.py:40-74`, `src/dashboard/tabs/liquidation.py:21-95`
+- **Issue:** Modelling a protocol-level exchange-rate shock (e.g. Lido slashing) by scaling the wstETH oracle is intentional for what-if analysis; not a protocol bug. (**Status:** Fixed/expected behaviour.)
 
-## 14. Liquidation Probability Chart Uses Stale Logic
+## 14. Liquidation Probability Chart Ignores `hf_paths`
 
-- **Code:** `src/dashboard/components/charts.py:252-301`
-- **Issue:** Still infers liquidation from cumulative min P&L even though Monte Carlo now liquidates via HF checks (`HF = collateral × threshold / debt`). Equity-positive paths can liquidate and will never be counted; equity-negative but safe paths can be counted erroneously.
-- **Impact:** The "Cumulative Liquidation Probability" visualization disagrees with the real Monte Carlo `liquidated` flag.
-- **Fix:** Added `hf_paths` to `MonteCarloResult`. Chart now uses `np.minimum.accumulate(mc_result.hf_paths)` and checks `cum_min_hf < 1.0` at each step.
-- **Status:** Fixed.
+- **Code:** `src/dashboard/components/charts.py:252-301`, `src/simulation/monte_carlo.py:152-189`
+- **Issue:** Now uses `hf_paths` to detect liquidations, so the chart matches the simulation. (**Status:** Fixed.)
 
-## 15. Stress Scenario Utilization/Duration Controls Are No-Ops
+## 15. Scenario Utilization & Duration Inputs Are Still Dead
 
-- **Code:** `src/stress/shock_engine.py:40-80`, `src/dashboard/tabs/stress_tests.py:62-139`
-- **Issue:** `StressScenario.utilization_shock` and `duration_days` (and the UI sliders for them) never flow into `apply_scenario`; only the peg is used.
-- **Impact:** Users believe they are stressing utilization/duration, but these inputs have zero effect on HF/P&L.
-- **Fix:** Dashboard now computes full period P&L: `peg_P&L + staking_income − borrow_cost` where `borrow_cost = debt × stressed_rate(utilization_shock) × duration/365`. Both historical and custom scenarios reflect borrow costs.
-- **Status:** Fixed.
+- **Code:** `src/stress/scenarios.py:13-24`, `src/stress/shock_engine.py:40-74`, `src/dashboard/tabs/stress_tests.py:62-194`
+- **Issue:** Custom/historical scenarios now feed `utilization_shock` and `duration_days` into borrow-cost calculations. (**Status:** Fixed.)
 
-## 16. Correlated VaR Still Treats P&L as Collateral Shock
+## 16. ETH Price Change Controls Do Nothing
 
-- **Code:** `src/stress/var.py:66-94`
-- **Issue:** `compute_var_from_scenarios` sets `stressed_collateral = collateral_value + pnl_array`. The correlated P&L already mixes collateral moves with debt growth (borrow cost, staking income), so subtracting it from collateral both double counts peg shocks and misclassifies pure cost shocks as collateral losses.
-- **Impact:** Reported liquidation probability for correlated VaR can show liquidations driven purely by borrow-cost stress even when collateral value never moved.
-- **Fix:** `compute_var_from_scenarios` now accepts optional `stressed_collateral_array` and `stressed_debt_array` for proper per-scenario HF computation. The correlated scenario loop tracks collateral and debt separately.
-- **Status:** Fixed.
+- **Code:** `src/stress/scenarios.py`, `src/dashboard/tabs/stress_tests.py`
+- **Issue:** ETH-price sliders were removed because ETH/USD moves do not affect HF; remaining fields are informational. (**Status:** Fixed.)
 
-## 17. ETH Price Change Inputs Are No-Ops
+## 17. Correlated Scenarios Drop the ETH Dimension
 
-- **Code:** `src/stress/scenarios.py:13-24`, `src/dashboard/tabs/stress_tests.py:62-139`, `src/stress/shock_engine.py:40-80`
-- **Issue:** Both historical scenarios and the custom scenario builder expose an `eth_price_change` field (UI slider + table column), but `apply_scenario()` ignores it entirely—it only rescales collateral by `scenario.steth_peg`.
-- **Impact:** Users are misled into thinking ETH drawdowns are included when, in reality, the stress outputs only reflect peg moves.
-- **Fix:** Removed the no-op "ETH Price Change (%)" slider from the custom scenario builder. Added an explanatory caption that ETH/USD moves don't affect ETH-denominated positions' HF. Historical table already omitted the column (previous fix). The `eth_price_change` field remains in `StressScenario` for reference but is no longer presented as a controllable input.
-- **Status:** Fixed.
+- **Code:** `src/stress/shock_engine.py:82-135`, `src/dashboard/tabs/stress_tests.py:220-258`
+- **Issue:** `_eth_change` in correlated scenarios is still discarded, so ETH/peg correlation inputs have no effect.
+- **Impact:** The “correlated shock analysis” is really just peg + utilization.
 
-## 18. Correlated Scenarios Ignore the Current Peg Baseline
+## 18. Monte Carlo Continues Accruing After Liquidation
 
-- **Code:** `src/stress/shock_engine.py:122-131`, `src/dashboard/tabs/stress_tests.py:30-78`
-- **Issue:** `generate_correlated_scenarios()` always centres peg shocks around 1.0 (`result[:, 1] = np.clip(1.0 + shocks[:, 1], ...)`) and the correlated VaR logic treats those as absolute peg levels. When the dashboard is already operating with a non-unit peg (via the sidebar slider or live data), section 4 still re-pegs collateral back to 1.0 in "neutral" scenarios.
-- **Impact:** Correlated VaR exaggerates positive P&L and understates liquidation risk whenever the actual peg ≠ 1.0.
-- **Fix:** `generate_correlated_scenarios` now accepts `base_peg` and `base_utilization` parameters to centre shocks around the current market values. The dashboard passes `current_peg` and `weth_state.utilization`.
-- **Status:** Fixed.
+- **Code:** `src/simulation/monte_carlo.py:152-189`
+- **Issue:** Balances are now frozen at the first HF<1.0 timestep so post-liquidation accruals stop. (**Status:** Fixed.)
+
+## 19. Cascade `at_risk_debt` Off by 100×
+
+- **Code:** `src/simulation/liquidation_cascade.py:108-109`
+- **Issue:** `depeg_pct = peg_drop * 100.0` converted the fractional peg drop to percentage points, then `at_risk_debt = debt * depeg_sensitivity * depeg_pct` multiplied by that percentage-point value. Net effect was 100× too much at-risk debt.
+- **Impact:** Cascades wiped out the entire pool in 2 steps. (**Status:** Fixed.)
+
+## 20. Cascade `peg_drop` Unbounded — Can Exceed 100%
+
+- **Code:** `src/simulation/liquidation_cascade.py:97`
+- **Issue:** `peg_drop = collateral_seized * price_impact_per_unit` had no upper bound, so a big liquidation could drive the modeled peg negative before the hard floor kicked in.
+- **Impact:** Cascade produced impossible negative prices mid-simulation. (**Status:** Fixed.)
+
+## 21. Scenario P&L Double Counts Slashing Losses
+
+- **Code:** `src/dashboard/tabs/stress_tests.py:102-150`
+- **Issue:** Table/metric P&L adds `shock.pnl_impact` (exchange-rate hit) and then accrues staking income on the *pre-stress* collateral value (`collateral_val`). After a slash, the staking base should be the stressed collateral. As written, income is overstated whenever the exchange-rate factor < 1.
+- **Impact:** Stress P&L (historical + custom) is biased high following a slashing event.
+
+## 22. Correlated ETH Shocks Still Ignored
+
+- **Code:** `src/dashboard/tabs/stress_tests.py:223-251`
+- **Issue:** `generate_correlated_scenarios` outputs `(eth_change, peg, utilization)` but `_eth_change` is thrown away, so ETH volatility/correlation never influence P&L or VaR.
+- **Impact:** Section 4 still models only peg/utilization, despite claiming tri-variate shocks.
+
+## 23. `simulate_withdrawal` Allows Negative Utilization
+
+- **Code:** `src/protocol/pool.py:74-93`
+- **Issue:** If a caller simulates withdrawing more than the total supply, `new_supply` becomes negative and the returned utilization flips sign. Utilization should be clamped to [0,1] by capping `new_supply` at zero.
+- **Impact:** Borrow-impact and sensitivity analyses can report nonsensical negative utilization if a user enters an outsized withdrawal.
 
 ---
 
-All eighteen items are now fixed.
+Issues 17, 21, 22, and 23 remain outstanding; the rest are fixed.

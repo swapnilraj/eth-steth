@@ -50,8 +50,13 @@ def render_liquidation(
 
     st.divider()
 
-    # Depeg sensitivity
-    st.subheader("stETH/ETH Depeg Sensitivity")
+    # Exchange rate sensitivity (Lido slashing risk)
+    st.subheader("Exchange Rate Sensitivity")
+    st.caption(
+        "Aave V3 prices wstETH using the Lido protocol exchange rate "
+        "(stEthPerToken), not the secondary-market stETH/ETH price. "
+        "Only a Lido slashing event can reduce this rate and lower HF."
+    )
 
     peg_at_liq = liq_model.depeg_to_liquidation(
         collateral_amount=position.collateral_amount,
@@ -60,10 +65,10 @@ def render_liquidation(
     )
 
     if peg_at_liq > 0:
-        depeg_pct = (1.0 - peg_at_liq) * 100
+        rate_drop_pct = (1.0 - peg_at_liq) * 100
         st.info(
-            f"Liquidation occurs at stETH/ETH peg of **{peg_at_liq:.4f}** "
-            f"(a **{depeg_pct:.2f}%** depeg from 1.0)"
+            f"Liquidation occurs at exchange rate factor **{peg_at_liq:.4f}** "
+            f"(a **{rate_drop_pct:.2f}%** reduction from current rate)"
         )
     else:
         st.error("Position is already at or below liquidation threshold!")
@@ -89,7 +94,7 @@ def render_liquidation(
 
     # Distance-to-liquidation table
     st.divider()
-    st.subheader("Depeg Scenarios")
+    st.subheader("Exchange Rate Scenarios")
 
     scenarios = [1.0, 0.99, 0.98, 0.97, 0.96, 0.95, 0.93, 0.90, 0.85]
     rows = []
@@ -99,7 +104,7 @@ def render_liquidation(
         status = "Safe" if scenario_hf > 1.0 else "LIQUIDATABLE"
         rows.append(
             {
-                "Peg Ratio": f"{peg:.2f}",
+                "Rate Factor": f"{peg:.2f}",
                 "Collateral Value (ETH)": f"{adj_collateral:,.0f}",
                 "Health Factor": f"{scenario_hf:.4f}",
                 "Status": status,

@@ -163,3 +163,39 @@ class TestCascadeSimulation:
         )
         result = simulate_cascade(pool_state, rate_params, config)
         assert len(result.steps) > 1
+
+    def test_cascade_does_not_immediately_wipe_out_all_debt(
+        self, pool_state: PoolState, rate_params: InterestRateParams
+    ) -> None:
+        """With moderate sensitivity, the cascade should produce multiple
+        meaningful steps rather than liquidating all debt in step 2."""
+        config = CascadeConfig(
+            initial_debt_to_liquidate=100_000.0,
+            collateral_price=1.18,
+            price_impact_per_unit=0.000001,
+            depeg_sensitivity=0.5,
+            max_steps=10,
+        )
+        result = simulate_cascade(pool_state, rate_params, config)
+        assert len(result.steps) >= 3
+        # No single step should liquidate more than 50% of the original debt
+        for step in result.steps:
+            assert step.debt_liquidated < pool_state.total_debt * 0.5
+        # Total debt liquidated should be a fraction (not total wipeout)
+        assert result.total_debt_liquidated < pool_state.total_debt
+
+    def test_peg_drop_clamped(
+        self, pool_state: PoolState, rate_params: InterestRateParams
+    ) -> None:
+        """Even with extreme price_impact_per_unit, collateral_price stays
+        above the floor (never goes negative)."""
+        config = CascadeConfig(
+            initial_debt_to_liquidate=200_000.0,
+            collateral_price=1.18,
+            price_impact_per_unit=0.01,  # extremely high
+            depeg_sensitivity=5.0,
+            max_steps=5,
+        )
+        result = simulate_cascade(pool_state, rate_params, config)
+        for step in result.steps:
+            assert step.collateral_price >= 0.01

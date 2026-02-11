@@ -59,4 +59,10 @@ class PoolDataProvider(ABC):
 
     @abstractmethod
     def get_steth_eth_peg(self) -> float:
-        """Get current stETH/ETH exchange rate (e.g. 1.0 = perfect peg)."""
+        """Get stETH/ETH market exchange rate from Chainlink.
+
+        Note: Aave V3 uses a hardcoded 1:1 stETH/ETH in its oracle, so
+        this market rate does NOT affect on-chain health factors.  In the
+        dashboard it is used as the baseline for exchange-rate shock
+        scenarios (modelling Lido slashing events).
+        """

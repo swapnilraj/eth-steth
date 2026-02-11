@@ -47,13 +47,18 @@ def apply_scenario(
 ) -> ShockResult:
     """Apply a stress scenario to a position and compute impact.
 
+    Aave V3 uses a hardcoded 1:1 stETH/ETH oracle, so secondary-market
+    depegs do not affect health factors.  The ``steth_peg`` field in the
+    scenario models a protocol exchange rate reduction (e.g. Lido
+    slashing) which IS reflected in the oracle.
+
     Args:
         scenario: The stress scenario to apply.
         collateral_amount: wstETH collateral amount.
-        collateral_price: wstETH/ETH price.
+        collateral_price: wstETH/ETH exchange-rate-only price.
         debt_value: Total debt in ETH.
         liquidation_threshold: Liquidation threshold (e.g. 0.955).
-        current_peg: Current stETH/ETH peg.
+        current_peg: Current exchange rate factor.
 
     Returns:
         ShockResult with before/after health factors and P&L impact.
@@ -61,10 +66,9 @@ def apply_scenario(
     collateral_before = collateral_amount * collateral_price * current_peg
     hf_before = (collateral_before * liquidation_threshold) / debt_value if debt_value > 0 else float("inf")
 
-    # Apply stress: only the peg matters for an ETH-denominated position.
-    # A USD move in ETH affects both collateral and debt equally (both are
-    # in ETH), so the health factor is unchanged. The only risk factor is
-    # the stETH/ETH peg deviation.
+    # Apply stress: only the exchange rate matters for an ETH-denominated
+    # position.  A USD move in ETH affects both collateral and debt
+    # equally (both are in ETH), so the health factor is unchanged.
     collateral_after = collateral_amount * collateral_price * scenario.steth_peg
 
     hf_after = (collateral_after * liquidation_threshold) / debt_value if debt_value > 0 else float("inf")
