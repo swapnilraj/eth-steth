@@ -92,3 +92,6 @@ class StaticDataProvider(PoolDataProvider):
 
     def get_steth_eth_peg(self) -> float:
         return _STETH_ETH_PEG
+
+    def get_staking_apy(self) -> float:
+        return 0.035  # Default 3.5% Lido staking yield

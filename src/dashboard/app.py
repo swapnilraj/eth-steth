@@ -3,6 +3,14 @@
 import os
 from pathlib import Path
 
+# Ensure web3 is installed (Streamlit Cloud may not pick it up from
+# requirements.txt / pyproject.toml).  This runs once at import time.
+try:
+    import web3 as _web3_check  # noqa: F401
+except ImportError:
+    import subprocess
+    subprocess.check_call(["pip", "install", "web3>=6.0"], timeout=120)
+
 import streamlit as st
 
 # Load .env file if present (for ETH_RPC_URL, etc.)
@@ -43,81 +51,93 @@ def main() -> None:
     st.title("wstETH/ETH Risk Dashboard")
     st.caption("Aave V3 — Mellow Vault Position Analysis")
 
-    # Sidebar controls
-    params = render_sidebar()
+    # Pre-create provider so we can fetch live staking APY for the sidebar.
+    # The on-chain toggle uses a stable key so its state persists across reruns.
+    use_onchain = st.sidebar.checkbox("Use On-Chain Data", value=False, key="use_onchain")
+    provider = create_provider(use_onchain=use_onchain)
 
-    # Build provider
-    provider = create_provider(use_onchain=params.use_onchain_data)
+    # Fetch live staking APY from provider
+    live_staking_apy: float | None = None
+    if use_onchain:
+        try:
+            from src.data.onchain_provider import OnChainDataProvider
+
+            if isinstance(provider, OnChainDataProvider):
+                live_staking_apy = provider.get_staking_apy()
+        except Exception:
+            pass
+    # Always try the Lido API for staking APY even with static provider
+    if live_staking_apy is None:
+        try:
+            live_staking_apy = provider.get_staking_apy()
+            # Only use it if it came from on-chain (not the static 0.035 default)
+            if not use_onchain and abs(live_staking_apy - 0.035) < 0.0001:
+                live_staking_apy = None  # Don't show "from Lido" for static default
+        except Exception:
+            pass
 
     # Show data source and connection diagnostics
-    if params.use_onchain_data:
-        from src.data.onchain_provider import OnChainDataProvider
+    if use_onchain:
+        try:
+            from src.data.onchain_provider import OnChainDataProvider
 
-        if isinstance(provider, OnChainDataProvider):
-            if provider.is_connected:
-                st.sidebar.success("On-chain: connected")
-                # Verify we can actually fetch data
-                try:
-                    test_peg = provider.get_steth_eth_peg()
-                    st.sidebar.caption(f"Live stETH/ETH peg: {test_peg:.6f}")
-                except Exception as exc:
-                    st.sidebar.error(f"RPC call failed: {exc}")
+            if isinstance(provider, OnChainDataProvider):
+                if provider.is_connected:
+                    st.sidebar.success("On-chain: connected")
+                    try:
+                        test_peg = provider.get_steth_eth_peg()
+                        st.sidebar.caption(f"Live stETH/ETH peg: {test_peg:.6f}")
+                    except Exception as exc:
+                        st.sidebar.error(f"RPC call failed: {exc}")
+                else:
+                    st.sidebar.error("On-chain: cannot reach RPC endpoint")
             else:
-                st.sidebar.error("On-chain: cannot reach RPC endpoint")
-        else:
-            # Diagnose why factory returned static provider
-            diag = []
-            rpc_url = os.environ.get("ETH_RPC_URL", "")
-            if not rpc_url:
-                diag.append("ETH_RPC_URL not found in environment")
-                # Check if it's in st.secrets directly
+                diag = []
+                rpc_url = os.environ.get("ETH_RPC_URL", "")
+                if not rpc_url:
+                    diag.append("ETH_RPC_URL not found in environment")
+                else:
+                    diag.append(f"ETH_RPC_URL is set ({rpc_url[:20]}...)")
                 try:
-                    secret_val = st.secrets.get("ETH_RPC_URL", "")
-                    if secret_val:
-                        diag.append(f"...but IS in st.secrets (bridge failed?)")
-                    else:
-                        diag.append("...also not in st.secrets")
-                except Exception:
-                    diag.append("...st.secrets not available")
-            else:
-                diag.append(f"ETH_RPC_URL is set ({rpc_url[:20]}...)")
-            try:
-                import web3  # noqa: F401
-                diag.append("web3 is installed")
-            except ImportError:
-                diag.append("web3 is NOT installed")
-                # Try to install at runtime and capture the error
-                import subprocess
+                    import web3  # noqa: F401
+                    diag.append("web3 is installed")
+                except ImportError:
+                    diag.append("web3 is NOT installed")
+                    import subprocess
+                    try:
+                        subprocess.check_output(
+                            ["pip", "install", "web3>=6.0"],
+                            stderr=subprocess.STDOUT,
+                            timeout=120,
+                        )
+                        diag.append("pip install succeeded — reload the page")
+                    except subprocess.CalledProcessError as pip_err:
+                        diag.append(f"pip install failed:\n{pip_err.output.decode()[-500:]}")
+                    except Exception as pip_exc:
+                        diag.append(f"pip install error: {pip_exc}")
                 try:
-                    out = subprocess.check_output(
-                        ["pip", "install", "web3>=6.0"],
-                        stderr=subprocess.STDOUT,
-                        timeout=120,
-                    ).decode()
-                    diag.append("pip install succeeded — reload the page")
-                except subprocess.CalledProcessError as pip_err:
-                    diag.append(f"pip install failed:\n{pip_err.output.decode()[-500:]}")
-                except Exception as pip_exc:
-                    diag.append(f"pip install error: {pip_exc}")
-            # Try creating provider directly to capture the error
-            try:
-                from src.data.onchain_provider import OnChainDataProvider as _OCP
-                if rpc_url:
-                    _OCP(rpc_url=rpc_url)
-                    diag.append("OnChainDataProvider created OK (should not reach here)")
-            except ImportError as e:
-                diag.append(f"Import error: {e}")
-            except Exception as e:
-                diag.append(f"Creation error: {e}")
-            st.sidebar.error("Fell back to static data")
-            for d in diag:
-                st.sidebar.caption(d)
+                    from src.data.onchain_provider import OnChainDataProvider as _OCP
+                    if rpc_url:
+                        _OCP(rpc_url=rpc_url)
+                        diag.append("OnChainDataProvider created OK (should not reach here)")
+                except ImportError as e:
+                    diag.append(f"Import error: {e}")
+                except Exception as e:
+                    diag.append(f"Creation error: {e}")
+                st.sidebar.error("Fell back to static data")
+                for d in diag:
+                    st.sidebar.caption(d)
+        except ImportError:
+            st.sidebar.error("Fell back to static data (web3 not available)")
 
     # Refresh button for on-chain data
-    if params.use_onchain_data and hasattr(provider, "refresh"):
+    if use_onchain and hasattr(provider, "refresh"):
         if st.sidebar.button("Refresh On-Chain Data"):
             provider.refresh()  # type: ignore[attr-defined]
             st.rerun()
+
+    # Sidebar controls (provider already created, pass live staking APY)
+    params = render_sidebar(live_staking_apy=live_staking_apy)
 
     # Build position from sidebar params
     position = VaultPosition(

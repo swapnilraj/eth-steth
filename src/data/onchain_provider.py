@@ -317,6 +317,21 @@ class OnChainDataProvider(PoolDataProvider):
         fb = self._fallback.get_steth_eth_peg if self._fallback else None
         return self._call_with_fallback("steth_eth_peg", _fetch, fb)
 
+    def get_staking_apy(self) -> float:
+        def _fetch() -> float:
+            import urllib.request
+            import json
+
+            url = "https://eth-api.lido.fi/v1/protocol/steth/apr/sma"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            # API returns percentage (e.g. 3.5), convert to decimal
+            return float(data["data"]["smaApr"]) / 100.0
+
+        fb = self._fallback.get_staking_apy if self._fallback else None
+        return self._call_with_fallback("staking_apy", _fetch, fb)
+
     # ------------------------------------------------------------------
     # Cache management
     # ------------------------------------------------------------------

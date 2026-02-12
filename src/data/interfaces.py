@@ -66,3 +66,7 @@ class PoolDataProvider(ABC):
         dashboard it is used as the baseline for exchange-rate shock
         scenarios (modelling Lido slashing events).
         """
+
+    @abstractmethod
+    def get_staking_apy(self) -> float:
+        """Get current Lido stETH staking APY as a decimal (e.g. 0.035 = 3.5%)."""

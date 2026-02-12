@@ -15,29 +15,18 @@ class SidebarParams:
     utilization_override: float | None
     depeg_level: float
     staking_apy: float
-    use_onchain_data: bool = False
 
 
-def render_sidebar() -> SidebarParams:
-    """Render sidebar controls and return selected parameters."""
-    st.sidebar.header("Data Source")
+def render_sidebar(live_staking_apy: float | None = None) -> SidebarParams:
+    """Render sidebar controls and return selected parameters.
 
-    use_onchain = st.sidebar.checkbox("Use On-Chain Data", value=False)
-    if use_onchain:
-        try:
-            from src.data.onchain_provider import OnChainDataProvider
-
-            import os
-
-            rpc_url = os.environ.get("ETH_RPC_URL", "")
-            if rpc_url:
-                # Mask the URL for display
-                masked = rpc_url[:20] + "..." if len(rpc_url) > 20 else rpc_url
-                st.sidebar.caption(f"RPC URL: `{masked}`")
-            else:
-                st.sidebar.warning("No ETH_RPC_URL set — will use static fallback")
-        except ImportError:
-            st.sidebar.warning("web3 not installed — will use static fallback")
+    Parameters
+    ----------
+    live_staking_apy : float | None
+        If provided, used as the default staking APY value (from on-chain).
+    """
+    # "Data Source" header and on-chain toggle are rendered in app.py
+    # before this function is called (to fetch live staking APY first).
 
     st.sidebar.header("Position Parameters")
 
@@ -88,13 +77,16 @@ def render_sidebar() -> SidebarParams:
         "oracle, so secondary-market depegs do not affect health factors."
     )
 
+    default_apy = round(live_staking_apy * 100, 1) if live_staking_apy is not None else 3.5
     staking_apy = st.sidebar.slider(
         "Staking APY (%)",
         min_value=0.0,
         max_value=10.0,
-        value=3.5,
+        value=default_apy,
         step=0.1,
     ) / 100.0
+    if live_staking_apy is not None:
+        st.sidebar.caption(f"Default from Lido: {live_staking_apy*100:.2f}%")
 
     return SidebarParams(
         collateral_amount=collateral,
@@ -103,5 +95,4 @@ def render_sidebar() -> SidebarParams:
         utilization_override=util_override,
         depeg_level=depeg,
         staking_apy=staking_apy,
-        use_onchain_data=use_onchain,
     )
