@@ -1,6 +1,7 @@
 """wstETH/ETH Risk Dashboard — Main Streamlit entry point."""
 
 import os
+import sys
 from pathlib import Path
 
 # Ensure web3 is installed (Streamlit Cloud may not pick it up from
@@ -10,9 +11,11 @@ try:
 except ImportError:
     import importlib
     import subprocess
-    import sys
 
-    subprocess.check_call(["pip", "install", "web3>=6.0"], timeout=300)
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "web3>=6.0"],
+        timeout=300,
+    )
     # Clear Python's cached failed-import entries so the fresh install is found
     for _mod in list(sys.modules):
         if _mod == "web3" or _mod.startswith("web3."):
@@ -115,7 +118,7 @@ def main() -> None:
                     import subprocess
                     try:
                         subprocess.check_output(
-                            ["pip", "install", "web3>=6.0"],
+                            [sys.executable, "-m", "pip", "install", "web3>=6.0"],
                             stderr=subprocess.STDOUT,
                             timeout=120,
                         )
