@@ -8,8 +8,17 @@ from pathlib import Path
 try:
     import web3 as _web3_check  # noqa: F401
 except ImportError:
+    import importlib
     import subprocess
-    subprocess.check_call(["pip", "install", "web3>=6.0"], timeout=120)
+    import sys
+
+    subprocess.check_call(["pip", "install", "web3>=6.0"], timeout=300)
+    # Clear Python's cached failed-import entries so the fresh install is found
+    for _mod in list(sys.modules):
+        if _mod == "web3" or _mod.startswith("web3."):
+            del sys.modules[_mod]
+    importlib.invalidate_caches()
+    import web3 as _web3_check  # noqa: F401
 
 import streamlit as st
 
