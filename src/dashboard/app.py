@@ -86,6 +86,19 @@ def main() -> None:
                 diag.append("web3 is installed")
             except ImportError:
                 diag.append("web3 is NOT installed")
+                # Try to install at runtime and capture the error
+                import subprocess
+                try:
+                    out = subprocess.check_output(
+                        ["pip", "install", "web3>=6.0"],
+                        stderr=subprocess.STDOUT,
+                        timeout=120,
+                    ).decode()
+                    diag.append("pip install succeeded — reload the page")
+                except subprocess.CalledProcessError as pip_err:
+                    diag.append(f"pip install failed:\n{pip_err.output.decode()[-500:]}")
+                except Exception as pip_exc:
+                    diag.append(f"pip install error: {pip_exc}")
             # Try creating provider directly to capture the error
             try:
                 from src.data.onchain_provider import OnChainDataProvider as _OCP
