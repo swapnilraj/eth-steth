@@ -431,12 +431,15 @@ def var_summary_chart(pnl_array: np.ndarray, var_result: VaRResult) -> go.Figure
         )
     )
 
-    fig.add_vline(x=var_result.var_95, line_dash="dash", line_color="#f59e0b",
-                  annotation_text=f"VaR95: {var_result.var_95:.0f}")
     fig.add_vline(x=var_result.var_99, line_dash="dash", line_color="#ef4444",
-                  annotation_text=f"VaR99: {var_result.var_99:.0f}")
+                  annotation_text=f"VaR99: {var_result.var_99:.0f}",
+                  annotation_position="bottom left")
     fig.add_vline(x=var_result.cvar_95, line_dash="dot", line_color="#f59e0b",
-                  annotation_text=f"CVaR95: {var_result.cvar_95:.0f}")
+                  annotation_text=f"CVaR95: {var_result.cvar_95:.0f}",
+                  annotation_position="top left")
+    fig.add_vline(x=var_result.var_95, line_dash="dash", line_color="#f59e0b",
+                  annotation_text=f"VaR95: {var_result.var_95:.0f}",
+                  annotation_position="top right")
 
     fig.update_layout(
         title="P&L Distribution with VaR",
