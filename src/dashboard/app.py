@@ -16,10 +16,12 @@ if _env_path.exists():
 
 # Bridge Streamlit Cloud secrets into os.environ so the rest of the app
 # (provider_factory, sidebar) can read them via os.environ.get().
-if hasattr(st, "secrets"):
+try:
     for key in st.secrets:
         if isinstance(st.secrets[key], str):
             os.environ.setdefault(key, st.secrets[key])
+except Exception:
+    pass  # No secrets configured
 
 from src.dashboard.components.sidebar import render_sidebar
 from src.dashboard.tabs.liquidation import render_liquidation
@@ -47,9 +49,27 @@ def main() -> None:
     # Build provider
     provider = create_provider(use_onchain=params.use_onchain_data)
 
+    # Show data source and connection diagnostics
+    if params.use_onchain_data:
+        from src.data.onchain_provider import OnChainDataProvider
+
+        if isinstance(provider, OnChainDataProvider):
+            if provider.is_connected:
+                st.sidebar.success("On-chain: connected")
+                # Verify we can actually fetch data
+                try:
+                    test_peg = provider.get_steth_eth_peg()
+                    st.sidebar.caption(f"Live stETH/ETH peg: {test_peg:.6f}")
+                except Exception as exc:
+                    st.sidebar.error(f"RPC call failed: {exc}")
+            else:
+                st.sidebar.error("On-chain: cannot reach RPC endpoint")
+        else:
+            st.sidebar.warning("Fell back to static data (check RPC URL / web3)")
+
     # Refresh button for on-chain data
     if params.use_onchain_data and hasattr(provider, "refresh"):
-        if st.button("Refresh On-Chain Data"):
+        if st.sidebar.button("Refresh On-Chain Data"):
             provider.refresh()  # type: ignore[attr-defined]
             st.rerun()
 

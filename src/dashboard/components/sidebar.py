@@ -31,11 +31,13 @@ def render_sidebar() -> SidebarParams:
 
             rpc_url = os.environ.get("ETH_RPC_URL", "")
             if rpc_url:
-                st.sidebar.caption("RPC: connected")
+                # Mask the URL for display
+                masked = rpc_url[:20] + "..." if len(rpc_url) > 20 else rpc_url
+                st.sidebar.caption(f"RPC URL: `{masked}`")
             else:
-                st.sidebar.caption("RPC: no ETH_RPC_URL set — will use static fallback")
+                st.sidebar.warning("No ETH_RPC_URL set — will use static fallback")
         except ImportError:
-            st.sidebar.caption("web3 not installed — will use static fallback")
+            st.sidebar.warning("web3 not installed — will use static fallback")
 
     st.sidebar.header("Position Parameters")
 
