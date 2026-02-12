@@ -32,18 +32,18 @@ class TestAMMPriceImpact:
         assert compute_amm_price_impact(0.0, pool) == 0.0
 
     def test_small_trade_low_impact(self) -> None:
-        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=59_000.0, fee_bps=30.0)
+        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=50_000.0, fee_bps=4.0)
         impact = compute_amm_price_impact(100.0, pool)
         assert 0 < impact < 0.01  # Less than 1% for small trade
 
     def test_large_trade_higher_impact(self) -> None:
-        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=59_000.0, fee_bps=30.0)
+        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=50_000.0, fee_bps=4.0)
         small_impact = compute_amm_price_impact(100.0, pool)
         large_impact = compute_amm_price_impact(10_000.0, pool)
         assert large_impact > small_impact
 
     def test_impact_increases_with_trade_size(self) -> None:
-        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=59_000.0, fee_bps=30.0)
+        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=50_000.0, fee_bps=4.0)
         prev_impact = 0.0
         for size in [100, 500, 1000, 5000, 10000]:
             impact = compute_amm_price_impact(float(size), pool)
@@ -79,7 +79,7 @@ class TestDetailedUnwindCost:
         assert result.slippage_cost == pytest.approx(20.0)  # 10000 * 20/10000
 
     def test_with_pool_uses_amm(self) -> None:
-        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=59_000.0, fee_bps=30.0)
+        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=50_000.0, fee_bps=4.0)
         result = estimate_unwind_cost_detailed(10_000.0, pool=pool)
         assert result.price_impact > 0
         assert result.slippage_cost > 0
@@ -95,3 +95,49 @@ class TestDetailedUnwindCost:
         small = estimate_unwind_cost_detailed(1_000.0, pool=pool)
         large = estimate_unwind_cost_detailed(20_000.0, pool=pool)
         assert large.slippage_cost > small.slippage_cost
+
+    def test_curve_liquidity_preferred_over_pool(self) -> None:
+        """When curve_liquidity is provided, it should be used over the pool model."""
+        from unittest.mock import MagicMock
+
+        from src.data.dex_liquidity import SwapQuote
+
+        mock_curve = MagicMock()
+        # Selling 10000 stETH on Curve yields 9950 ETH (50 ETH slippage)
+        mock_curve.get_swap_output.return_value = SwapQuote(
+            input_amount=10_000.0,
+            output_amount=9_950.0,
+            price_impact=0.005,
+            source="curve",
+        )
+
+        # Give it a pool too — should be ignored in favor of curve
+        pool = DEXPoolParams(reserve_x=50_000.0, reserve_y=50_000.0, fee_bps=4.0)
+        result = estimate_unwind_cost_detailed(
+            10_000.0, pool=pool, curve_liquidity=mock_curve,
+        )
+
+        # Slippage = 10000 - 9950 = 50 ETH
+        assert result.slippage_cost == pytest.approx(50.0)
+        assert result.price_impact == pytest.approx(0.005)
+        mock_curve.get_swap_output.assert_called_once_with(10_000.0)
+
+    def test_steth_trade_size_equals_debt(self) -> None:
+        """Trade size on Curve should be ~debt_amount stETH (1:1 peg assumption)."""
+        from unittest.mock import MagicMock
+
+        from src.data.dex_liquidity import SwapQuote
+
+        mock_curve = MagicMock()
+        mock_curve.get_swap_output.return_value = SwapQuote(
+            input_amount=5_000.0,
+            output_amount=4_998.0,
+            price_impact=0.0004,
+            source="curve",
+        )
+
+        estimate_unwind_cost_detailed(5_000.0, curve_liquidity=mock_curve)
+
+        # Should sell ~5000 stETH to get ~5000 ETH for 5000 WETH debt
+        call_args = mock_curve.get_swap_output.call_args[0]
+        assert call_args[0] == pytest.approx(5_000.0)

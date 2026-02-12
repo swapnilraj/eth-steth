@@ -70,6 +70,18 @@ def compute_apy_breakdown(
     )
 
 
+@dataclass(frozen=True)
+class PnLDecomposition:
+    """Detailed P&L decomposition with basis and break-even analysis."""
+
+    staking_income_daily: float   # ETH/day from staking yield
+    supply_income_daily: float    # ETH/day from Aave supply yield
+    borrow_cost_daily: float      # ETH/day borrow cost
+    net_carry_daily: float        # Net daily carry (income - cost)
+    basis_spread: float           # staking_apy - borrow_apy
+    break_even_peg_drop: float    # Max peg drop before carry turns negative annualized
+
+
 def daily_pnl(
     position: VaultPosition,
     provider: PoolDataProvider,
@@ -88,3 +100,51 @@ def daily_pnl(
     income = collateral_val * (staking_apy + breakdown.supply_apy)
     cost = debt_val * breakdown.borrow_apy
     return (income - cost) / 365.25
+
+
+def pnl_decomposition(
+    position: VaultPosition,
+    provider: PoolDataProvider,
+    staking_apy: float = 0.035,
+) -> PnLDecomposition:
+    """Compute detailed P&L decomposition with basis spread analysis.
+
+    Args:
+        position: The vault position.
+        provider: Data provider for pool state and params.
+        staking_apy: Annual staking reward rate.
+
+    Returns:
+        PnLDecomposition with carry breakdown and break-even analysis.
+    """
+    breakdown = compute_apy_breakdown(position, provider, staking_apy)
+    collateral_val = position.collateral_value(provider)
+    debt_val = position.debt_value(provider)
+
+    staking_income = collateral_val * staking_apy / 365.25
+    supply_income = collateral_val * breakdown.supply_apy / 365.25
+    borrow_cost = debt_val * breakdown.borrow_apy / 365.25
+    net_carry = staking_income + supply_income - borrow_cost
+
+    # Basis spread: difference between staking yield and borrow cost rate
+    basis_spread = staking_apy - breakdown.borrow_apy
+
+    # Break-even peg drop: how much the exchange rate can drop (annually)
+    # before the position's net carry turns negative.
+    # Net carry = collateral × (staking + supply) - debt × borrow
+    # If peg drops by X, collateral_val drops by X × collateral_val
+    # Break-even: net_carry_annual = X × collateral_val
+    net_carry_annual = (staking_income + supply_income - borrow_cost) * 365.25
+    if collateral_val > 0:
+        break_even = net_carry_annual / collateral_val
+    else:
+        break_even = 0.0
+
+    return PnLDecomposition(
+        staking_income_daily=staking_income,
+        supply_income_daily=supply_income,
+        borrow_cost_daily=borrow_cost,
+        net_carry_daily=net_carry,
+        basis_spread=basis_spread,
+        break_even_peg_drop=max(0.0, break_even),
+    )

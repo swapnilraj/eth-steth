@@ -220,3 +220,64 @@ WSTETH_ABI = [
         "type": "function",
     },
 ]
+
+# ---------------------------------------------------------------------------
+# DEX Pool Addresses
+# ---------------------------------------------------------------------------
+CURVE_STETH_ETH_POOL = "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"
+UNISWAP_V3_WSTETH_ETH_POOL = "0xd340b57aacdd10f96fc1cf10e15921936f41e29c"
+
+# Curve StableSwap ABI (minimal: balances, get_dy, coins)
+CURVE_POOL_ABI = [
+    {
+        "name": "balances",
+        "inputs": [{"name": "i", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "name": "get_dy",
+        "inputs": [
+            {"name": "i", "type": "int128"},
+            {"name": "j", "type": "int128"},
+            {"name": "dx", "type": "uint256"},
+        ],
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "name": "coins",
+        "inputs": [{"name": "i", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "address"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]
+
+# Uniswap V3 Pool ABI (minimal: slot0, liquidity)
+UNISWAP_V3_POOL_ABI = [
+    {
+        "name": "slot0",
+        "inputs": [],
+        "outputs": [
+            {"name": "sqrtPriceX96", "type": "uint160"},
+            {"name": "tick", "type": "int24"},
+            {"name": "observationIndex", "type": "uint16"},
+            {"name": "observationCardinality", "type": "uint16"},
+            {"name": "observationCardinalityNext", "type": "uint16"},
+            {"name": "feeProtocol", "type": "uint8"},
+            {"name": "unlocked", "type": "bool"},
+        ],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "name": "liquidity",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "uint128"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]

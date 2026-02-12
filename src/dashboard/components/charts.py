@@ -452,6 +452,81 @@ def var_summary_chart(pnl_array: np.ndarray, var_result: VaRResult) -> go.Figure
     return fig
 
 
+def peg_fan_chart(peg_paths: np.ndarray, timesteps: np.ndarray) -> go.Figure:
+    """Percentile fan chart of exchange rate (peg) evolution over time.
+
+    Args:
+        peg_paths: (n_paths, n_steps) array of exchange rate paths.
+        timesteps: (n_steps,) array of time in days.
+
+    Returns:
+        Plotly Figure with percentile bands (5/25/50/75/95).
+    """
+    p5 = np.percentile(peg_paths, 5, axis=0)
+    p25 = np.percentile(peg_paths, 25, axis=0)
+    p50 = np.percentile(peg_paths, 50, axis=0)
+    p75 = np.percentile(peg_paths, 75, axis=0)
+    p95 = np.percentile(peg_paths, 95, axis=0)
+
+    fig = go.Figure()
+
+    # 5-95 band
+    fig.add_trace(
+        go.Scatter(
+            x=np.concatenate([timesteps, timesteps[::-1]]),
+            y=np.concatenate([p95, p5[::-1]]),
+            fill="toself",
+            fillcolor="rgba(168,85,247,0.1)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="5th-95th percentile",
+            hoverinfo="skip",
+        )
+    )
+
+    # 25-75 band
+    fig.add_trace(
+        go.Scatter(
+            x=np.concatenate([timesteps, timesteps[::-1]]),
+            y=np.concatenate([p75, p25[::-1]]),
+            fill="toself",
+            fillcolor="rgba(168,85,247,0.25)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="25th-75th percentile",
+            hoverinfo="skip",
+        )
+    )
+
+    # Median
+    fig.add_trace(
+        go.Scatter(
+            x=timesteps,
+            y=p50,
+            mode="lines",
+            name="Median",
+            line=dict(color="#a855f7", width=2),
+            hovertemplate="Day %{x:.0f}<br>Peg: %{y:.4f}<extra></extra>",
+        )
+    )
+
+    # Reference line at 1.0
+    fig.add_hline(
+        y=1.0,
+        line_dash="dash",
+        line_color="#6b7280",
+        annotation_text="Perfect Peg (1.0)",
+    )
+
+    fig.update_layout(
+        title="Exchange Rate (wstETH/ETH) Fan Chart",
+        xaxis_title="Day",
+        yaxis_title="Exchange Rate",
+        template="plotly_dark",
+        height=450,
+    )
+
+    return fig
+
+
 def correlated_scatter_chart(
     peg_values: np.ndarray,
     util_values: np.ndarray,

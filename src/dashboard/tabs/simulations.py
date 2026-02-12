@@ -1,11 +1,17 @@
 """Simulations page — Monte Carlo, liquidation cascade, and unwind cost."""
 
+from __future__ import annotations
+
+import logging
+import os
+
 import pandas as pd
 import streamlit as st
 
 from src.dashboard.components.charts import (
     cascade_waterfall_chart,
     liquidation_probability_chart,
+    peg_fan_chart,
     pnl_distribution_histogram,
     rate_fan_chart,
     unwind_cost_breakdown_chart,
@@ -19,8 +25,14 @@ from src.position.unwind import (
 from src.position.vault_position import VaultPosition
 from src.protocol.interest_rate import InterestRateModel, InterestRateParams
 from src.protocol.pool import PoolState
-from src.simulation.liquidation_cascade import CascadeConfig, simulate_cascade
-from src.simulation.monte_carlo import OUParams, run_monte_carlo
+from src.simulation.liquidation_cascade import (
+    CascadeConfig,
+    simulate_cascade,
+    simulate_cascade_with_positions,
+)
+from src.simulation.monte_carlo import OUParams, PegDynamicsParams, run_monte_carlo
+
+logger = logging.getLogger(__name__)
 
 
 def render_simulations(
@@ -65,6 +77,16 @@ def render_simulations(
 
     ou_params = OUParams(theta=ou_theta, kappa=ou_kappa, sigma=ou_sigma)
 
+    # Exchange rate dynamics toggle
+    enable_peg_dynamics = st.checkbox(
+        "Enable exchange rate dynamics",
+        value=False,
+        help="Model stochastic wstETH/ETH exchange rate with jump-diffusion (peg volatility and Lido slashing events).",
+    )
+
+    current_peg = provider.get_steth_eth_peg()
+    peg_params = PegDynamicsParams() if enable_peg_dynamics else None
+
     mc_result = run_monte_carlo(
         u0=u0,
         collateral_value=collateral_val,
@@ -80,6 +102,8 @@ def render_simulations(
         n_paths=int(n_paths),
         horizon_days=int(horizon),
         seed=int(mc_seed),
+        peg_params=peg_params,
+        initial_peg=current_peg,
     )
 
     # KPIs
@@ -112,56 +136,18 @@ def render_simulations(
     fig_liq = liquidation_probability_chart(mc_result)
     st.plotly_chart(fig_liq, use_container_width=True)
 
+    # Peg fan chart (only when exchange rate dynamics are enabled)
+    if mc_result.peg_paths is not None:
+        st.subheader("Exchange Rate Evolution")
+        fig_peg = peg_fan_chart(mc_result.peg_paths, mc_result.timesteps)
+        st.plotly_chart(fig_peg, use_container_width=True)
+
     st.divider()
 
     # --- Section 2: Liquidation Cascade ---
     st.subheader("Liquidation Cascade Analysis")
 
-    cas_col1, cas_col2 = st.columns(2)
-    with cas_col1:
-        init_debt = st.number_input(
-            "Initial Debt to Liquidate",
-            min_value=1000.0,
-            max_value=1_000_000.0,
-            value=100_000.0,
-            step=10_000.0,
-            format="%.0f",
-        )
-        liq_bonus = st.number_input(
-            "Liquidation Bonus",
-            min_value=0.001,
-            max_value=0.10,
-            value=0.01,
-            step=0.005,
-            format="%.3f",
-        )
-    with cas_col2:
-        price_impact = st.number_input(
-            "Price Impact per wstETH Sold",
-            min_value=0.000001,
-            max_value=0.001,
-            value=0.00001,
-            step=0.000001,
-            format="%.6f",
-        )
-        depeg_sens = st.number_input(
-            "Depeg Sensitivity",
-            min_value=0.0,
-            max_value=20.0,
-            value=5.0,
-            step=0.5,
-            format="%.1f",
-        )
-
     wsteth_price = provider.get_asset_price(WSTETH)
-    cascade_config = CascadeConfig(
-        initial_debt_to_liquidate=init_debt,
-        collateral_price=wsteth_price,
-        liquidation_bonus=liq_bonus,
-        price_impact_per_unit=price_impact,
-        depeg_sensitivity=depeg_sens,
-    )
-
     rate_params = InterestRateParams(
         optimal_utilization=weth_params.optimal_utilization,
         base_rate=weth_params.base_rate,
@@ -170,7 +156,134 @@ def render_simulations(
         reserve_factor=weth_params.reserve_factor,
     )
 
-    cascade_result = simulate_cascade(weth_state, rate_params, cascade_config)
+    # Try to fetch real Aave positions and Curve liquidity
+    aave_positions = None
+    curve_liquidity = None
+    has_graph_key = bool(os.environ.get("THEGRAPH_API_KEY", ""))
+
+    if has_graph_key:
+        try:
+            from src.data.aave_positions import fetch_aave_positions
+
+            with st.spinner("Fetching Aave V3 positions from subgraph..."):
+                aave_positions = fetch_aave_positions(
+                    wsteth_price=wsteth_price,
+                    liquidation_threshold=liq_model.liquidation_threshold,
+                )
+            if aave_positions:
+                st.caption(f"Loaded {len(aave_positions)} wstETH/WETH positions from Aave V3 subgraph")
+        except Exception as exc:
+            logger.warning("Failed to fetch Aave positions: %s", exc)
+            st.caption("Could not fetch live positions — using heuristic model")
+
+    # Try Curve pool for real price impact
+    try:
+        from src.data.onchain_provider import OnChainDataProvider
+
+        if isinstance(provider, OnChainDataProvider):
+            from src.data.dex_liquidity import CurveLiquidity
+
+            curve_liquidity = CurveLiquidity(provider._w3)
+    except Exception:
+        pass
+
+    if aave_positions:
+        # Real position-based cascade
+        cas_col1, cas_col2 = st.columns(2)
+        with cas_col1:
+            peg_shock = st.number_input(
+                "Initial Peg Shock (%)",
+                min_value=0.0,
+                max_value=50.0,
+                value=5.0,
+                step=1.0,
+                format="%.1f",
+                help="Initial exchange rate drop before cascade begins.",
+            ) / 100.0
+            liq_bonus = st.number_input(
+                "Liquidation Bonus",
+                min_value=0.001,
+                max_value=0.10,
+                value=0.01,
+                step=0.005,
+                format="%.3f",
+            )
+        with cas_col2:
+            price_impact = st.number_input(
+                "Fallback Price Impact per wstETH",
+                min_value=0.000001,
+                max_value=0.001,
+                value=0.00001,
+                step=0.000001,
+                format="%.6f",
+                help="Used only when Curve pool data is unavailable.",
+            )
+
+        cascade_result = simulate_cascade_with_positions(
+            positions=aave_positions,
+            initial_peg_shock=peg_shock,
+            pool_state=weth_state,
+            rate_params=rate_params,
+            collateral_price=wsteth_price,
+            liquidation_threshold=liq_model.liquidation_threshold,
+            liquidation_bonus=liq_bonus,
+            price_impact_per_unit=price_impact,
+            curve_liquidity=curve_liquidity,
+        )
+
+        if curve_liquidity:
+            st.caption("Price impact: Curve stETH/ETH pool (on-chain)")
+        else:
+            st.caption("Price impact: linear fallback model")
+    else:
+        # Heuristic cascade (no subgraph data)
+        cas_col1, cas_col2 = st.columns(2)
+        with cas_col1:
+            init_debt = st.number_input(
+                "Initial Debt to Liquidate",
+                min_value=1000.0,
+                max_value=1_000_000.0,
+                value=100_000.0,
+                step=10_000.0,
+                format="%.0f",
+            )
+            liq_bonus = st.number_input(
+                "Liquidation Bonus",
+                min_value=0.001,
+                max_value=0.10,
+                value=0.01,
+                step=0.005,
+                format="%.3f",
+            )
+        with cas_col2:
+            price_impact = st.number_input(
+                "Price Impact per wstETH Sold",
+                min_value=0.000001,
+                max_value=0.001,
+                value=0.00001,
+                step=0.000001,
+                format="%.6f",
+            )
+            depeg_sens = st.number_input(
+                "Depeg Sensitivity",
+                min_value=0.0,
+                max_value=20.0,
+                value=5.0,
+                step=0.5,
+                format="%.1f",
+            )
+
+        cascade_config = CascadeConfig(
+            initial_debt_to_liquidate=init_debt,
+            collateral_price=wsteth_price,
+            liquidation_bonus=liq_bonus,
+            price_impact_per_unit=price_impact,
+            depeg_sensitivity=depeg_sens,
+        )
+        cascade_result = simulate_cascade(weth_state, rate_params, cascade_config)
+
+        if not has_graph_key:
+            st.caption("Set THEGRAPH_API_KEY to use real Aave positions instead of heuristic model")
 
     cas_kpi1, cas_kpi2, cas_kpi3 = st.columns(3)
     with cas_kpi1:
@@ -201,53 +314,82 @@ def render_simulations(
 
     # --- Section 3: Unwind Cost ---
     st.subheader("Unwind Cost Estimation")
-
-    uw_col1, uw_col2, uw_col3 = st.columns(3)
-    with uw_col1:
-        pool_reserve_x = st.number_input(
-            "Pool wstETH Reserve",
-            min_value=1000.0,
-            max_value=500_000.0,
-            value=50_000.0,
-            step=5_000.0,
-            format="%.0f",
-        )
-    with uw_col2:
-        pool_reserve_y = st.number_input(
-            "Pool WETH Reserve",
-            min_value=1000.0,
-            max_value=500_000.0,
-            value=59_000.0,
-            step=5_000.0,
-            format="%.0f",
-        )
-    with uw_col3:
-        pool_fee = st.number_input(
-            "Pool Fee (bps)",
-            min_value=1.0,
-            max_value=100.0,
-            value=30.0,
-            step=1.0,
-        )
-
-    pool = DEXPoolParams(
-        reserve_x=pool_reserve_x,
-        reserve_y=pool_reserve_y,
-        fee_bps=pool_fee,
+    st.caption(
+        "Unwind path: withdraw wstETH → unwrap to stETH → swap stETH→ETH on Curve → wrap to WETH → repay debt"
     )
 
-    unwind_result = estimate_unwind_cost_detailed(
-        debt_amount=position.debt_amount,
-        pool=pool,
-    )
+    if curve_liquidity is not None:
+        # Best option: real Curve StableSwap get_dy() quotes
+        try:
+            reserves = curve_liquidity.get_reserves()
+            st.info(
+                f"Using **Curve stETH/ETH StableSwap** pool (on-chain `get_dy()`)\n\n"
+                f"Pool reserves: {reserves.reserve_token0:,.0f} stETH / "
+                f"{reserves.reserve_token1:,.0f} ETH"
+            )
+        except Exception:
+            pass
+
+        unwind_result = estimate_unwind_cost_detailed(
+            debt_amount=position.debt_amount,
+            curve_liquidity=curve_liquidity,
+            wsteth_rate=wsteth_price,
+        )
+        unwind_source = "curve"
+    else:
+        # Fallback: constant-product model (overestimates for StableSwap)
+        st.info(
+            "Using **constant-product (x*y=k) approximation** — "
+            "this overestimates price impact vs Curve's StableSwap invariant. "
+            "Enable on-chain data for accurate Curve `get_dy()` quotes."
+        )
+        uw_col1, uw_col2, uw_col3 = st.columns(3)
+        with uw_col1:
+            pool_reserve_x = st.number_input(
+                "Pool stETH Reserve",
+                min_value=1000.0,
+                max_value=500_000.0,
+                value=50_000.0,
+                step=5_000.0,
+                format="%.0f",
+            )
+        with uw_col2:
+            pool_reserve_y = st.number_input(
+                "Pool ETH Reserve",
+                min_value=1000.0,
+                max_value=500_000.0,
+                value=50_000.0,
+                step=5_000.0,
+                format="%.0f",
+            )
+        with uw_col3:
+            pool_fee = st.number_input(
+                "Pool Fee (bps)",
+                min_value=1.0,
+                max_value=100.0,
+                value=4.0,
+                step=1.0,
+            )
+
+        pool = DEXPoolParams(
+            reserve_x=pool_reserve_x,
+            reserve_y=pool_reserve_y,
+            fee_bps=pool_fee,
+        )
+
+        unwind_result = estimate_unwind_cost_detailed(
+            debt_amount=position.debt_amount,
+            pool=pool,
+        )
+        unwind_source = "constant-product"
 
     uw_kpi1, uw_kpi2, uw_kpi3 = st.columns(3)
     with uw_kpi1:
         st.metric("Total Unwind Cost", f"{unwind_result.total_cost:.2f} ETH")
     with uw_kpi2:
-        st.metric("Price Impact", f"{unwind_result.price_impact*100:.2f}%")
+        st.metric("Price Impact", f"{unwind_result.price_impact*100:.4f}%")
     with uw_kpi3:
-        st.metric("Effective Slippage", f"{unwind_result.effective_slippage_bps:.1f} bps")
+        st.metric("Effective Slippage", f"{unwind_result.effective_slippage_bps:.2f} bps")
 
     fig_unwind = unwind_cost_breakdown_chart(
         unwind_result.slippage_cost,
@@ -261,11 +403,39 @@ def render_simulations(
     sizes = [1_000, 2_500, 5_000, 10_000, 15_000, 20_000, 30_000, 50_000]
     size_rows = []
     for size in sizes:
-        r = estimate_unwind_cost_detailed(debt_amount=float(size), pool=pool)
+        if unwind_source == "curve" and curve_liquidity is not None:
+            r = estimate_unwind_cost_detailed(
+                debt_amount=float(size), curve_liquidity=curve_liquidity,
+            )
+        else:
+            r = estimate_unwind_cost_detailed(debt_amount=float(size), pool=pool)
         size_rows.append({
             "Debt Size": f"{size:,}",
             "Slippage Cost": f"{r.slippage_cost:.2f} ETH",
-            "Impact": f"{r.price_impact*100:.3f}%",
+            "Impact": f"{r.price_impact*100:.4f}%",
             "Total Cost": f"{r.total_cost:.2f} ETH",
         })
     st.table(pd.DataFrame(size_rows))
+
+    # --- Model Limitations ---
+    st.divider()
+    st.subheader("Model Limitations")
+    st.warning(
+        "**Important disclaimers about the simulation models:**\n\n"
+        "- **Utilization model**: The Ornstein-Uhlenbeck process assumes mean-reverting "
+        "utilization with constant parameters. In practice, utilization dynamics can shift "
+        "due to governance changes, market regime shifts, or protocol upgrades.\n\n"
+        "- **Exchange rate dynamics**: The jump-diffusion model for wstETH/ETH uses "
+        "calibrated but static parameters (volatility, jump intensity, jump size). Actual "
+        "slashing events and depeg dynamics may differ significantly from modeled behavior.\n\n"
+        "- **Correlation structure**: The Cholesky-based correlation between utilization "
+        "and exchange rate is fixed. Real-world correlations are time-varying and may "
+        "spike during stress events.\n\n"
+        "- **Liquidation simplification**: The cascade model uses a stylized price impact "
+        "function and does not capture the full complexity of on-chain liquidation "
+        "mechanics, MEV, or multi-protocol contagion effects.\n\n"
+        "- **No tail dependence**: The Gaussian copula used for correlation does not "
+        "capture tail dependence — extreme events may be more correlated than modeled.\n\n"
+        "- **This is not financial advice.** These simulations are for educational and "
+        "research purposes only."
+    )

@@ -5,6 +5,7 @@ import pytest
 
 from src.simulation.monte_carlo import (
     OUParams,
+    PegDynamicsParams,
     _vectorized_borrow_rate,
     run_monte_carlo,
     simulate_utilization_paths,
@@ -195,3 +196,151 @@ class TestRunMonteCarlo:
             seed=42,
         )
         assert np.mean(mc_low.terminal_pnl) > np.mean(mc_high.terminal_pnl)
+
+
+class TestPegDynamics:
+    """Tests for the new exchange rate dynamics in MC simulation."""
+
+    def test_peg_paths_returned_when_enabled(self) -> None:
+        peg_params = PegDynamicsParams()
+        mc = run_monte_carlo(
+            u0=0.78,
+            collateral_value=14160.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=50,
+            horizon_days=30,
+            seed=42,
+            peg_params=peg_params,
+            initial_peg=1.0,
+        )
+        assert mc.peg_paths is not None
+        assert mc.peg_paths.shape == (50, 31)
+        assert mc.collateral_value_paths is not None
+        assert mc.collateral_value_paths.shape == (50, 31)
+
+    def test_no_peg_paths_without_params(self) -> None:
+        mc = run_monte_carlo(
+            u0=0.78,
+            collateral_value=14160.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=20,
+            horizon_days=30,
+            seed=42,
+        )
+        assert mc.peg_paths is None
+        # collateral_value_paths is always populated (tracks collateral growth)
+        assert mc.collateral_value_paths is not None
+        assert mc.collateral_value_paths.shape == (20, 31)
+
+    def test_peg_paths_bounded(self) -> None:
+        """Peg should stay above floor (0.01)."""
+        peg_params = PegDynamicsParams(peg_vol=0.10, peg_jump_intensity=1.0, peg_jump_size=-0.10)
+        mc = run_monte_carlo(
+            u0=0.78,
+            collateral_value=14160.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=200,
+            horizon_days=365,
+            seed=42,
+            peg_params=peg_params,
+            initial_peg=1.0,
+        )
+        assert mc.peg_paths is not None
+        assert np.all(mc.peg_paths >= 0.01)
+
+    def test_peg_initial_value(self) -> None:
+        peg_params = PegDynamicsParams()
+        mc = run_monte_carlo(
+            u0=0.78,
+            collateral_value=14160.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=10,
+            horizon_days=30,
+            seed=42,
+            peg_params=peg_params,
+            initial_peg=0.98,
+        )
+        assert mc.peg_paths is not None
+        np.testing.assert_array_almost_equal(mc.peg_paths[:, 0], 0.98)
+
+    def test_peg_deterministic(self) -> None:
+        kwargs = dict(
+            u0=0.78,
+            collateral_value=14160.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=20,
+            horizon_days=30,
+            seed=42,
+            peg_params=PegDynamicsParams(),
+            initial_peg=1.0,
+        )
+        mc1 = run_monte_carlo(**kwargs)
+        mc2 = run_monte_carlo(**kwargs)
+        assert mc1.peg_paths is not None and mc2.peg_paths is not None
+        np.testing.assert_array_equal(mc1.peg_paths, mc2.peg_paths)
+        np.testing.assert_array_equal(mc1.terminal_pnl, mc2.terminal_pnl)
+
+    def test_peg_drops_cause_more_liquidations(self) -> None:
+        """With aggressive peg drops, more paths should get liquidated."""
+        # Baseline: no peg dynamics
+        mc_no_peg = run_monte_carlo(
+            u0=0.78,
+            collateral_value=11200.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=1000,
+            horizon_days=365,
+            seed=42,
+        )
+        # With aggressive peg drops
+        mc_peg = run_monte_carlo(
+            u0=0.78,
+            collateral_value=11200.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=1000,
+            horizon_days=365,
+            seed=42,
+            peg_params=PegDynamicsParams(peg_vol=0.10, peg_jump_intensity=0.5, peg_jump_size=-0.10),
+            initial_peg=1.0,
+        )
+        # More liquidations with peg risk
+        assert np.sum(mc_peg.liquidated) >= np.sum(mc_no_peg.liquidated)
+
+    def test_liquidated_peg_paths_frozen(self) -> None:
+        """Once liquidated, peg paths should also freeze."""
+        mc = run_monte_carlo(
+            u0=0.78,
+            collateral_value=11000.0,
+            debt_value=10500.0,
+            liquidation_threshold=0.955,
+            staking_apy=0.035,
+            n_paths=500,
+            horizon_days=365,
+            seed=42,
+            peg_params=PegDynamicsParams(peg_vol=0.08, peg_jump_intensity=0.5, peg_jump_size=-0.08),
+            initial_peg=1.0,
+        )
+        if not np.any(mc.liquidated):
+            pytest.skip("No liquidations occurred")
+        assert mc.peg_paths is not None
+        liq_indices = np.where(mc.liquidated)[0]
+        hf_below = mc.hf_paths < 1.0
+        first_liq_step = np.argmax(hf_below, axis=1)
+        for i in liq_indices[:5]:  # Check first 5
+            t = first_liq_step[i]
+            if t < mc.peg_paths.shape[1] - 1:
+                post_liq_peg = mc.peg_paths[i, t:]
+                assert np.all(post_liq_peg == post_liq_peg[0])

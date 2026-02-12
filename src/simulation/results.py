@@ -17,6 +17,8 @@ class MonteCarloResult:
         liquidated: (n_paths,) boolean array — True if path hit liquidation.
         hf_paths: (n_paths, n_steps) array of health factor over time.
         timesteps: (n_steps,) array of time in days.
+        peg_paths: (n_paths, n_steps) array of exchange rate over time, or None.
+        collateral_value_paths: (n_paths, n_steps) array of collateral value, or None.
     """
 
     utilization_paths: np.ndarray
@@ -26,6 +28,8 @@ class MonteCarloResult:
     liquidated: np.ndarray
     hf_paths: np.ndarray
     timesteps: np.ndarray
+    peg_paths: np.ndarray | None = None
+    collateral_value_paths: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

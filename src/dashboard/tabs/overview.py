@@ -4,7 +4,7 @@ import streamlit as st
 
 from src.dashboard.components.metrics_cards import kpi_row
 from src.data.interfaces import PoolDataProvider
-from src.position.pnl import compute_apy_breakdown, daily_pnl
+from src.position.pnl import compute_apy_breakdown, daily_pnl, pnl_decomposition
 from src.position.vault_position import VaultPosition
 
 
@@ -68,3 +68,27 @@ def render_overview(
     # Peg display
     peg = provider.get_steth_eth_peg()
     st.info(f"stETH/ETH Peg: **{peg:.4f}**")
+
+    st.divider()
+
+    # PnL Decomposition
+    st.subheader("P&L Decomposition")
+    decomp = pnl_decomposition(position, provider, staking_apy)
+
+    decomp_col1, decomp_col2, decomp_col3 = st.columns(3)
+    with decomp_col1:
+        st.metric("Staking Income (daily)", f"{decomp.staking_income_daily:.4f} ETH")
+    with decomp_col2:
+        st.metric("Supply Income (daily)", f"{decomp.supply_income_daily:.6f} ETH")
+    with decomp_col3:
+        st.metric("Borrow Cost (daily)", f"-{decomp.borrow_cost_daily:.4f} ETH")
+
+    decomp_col4, decomp_col5, decomp_col6 = st.columns(3)
+    with decomp_col4:
+        st.metric("Net Carry (daily)", f"{decomp.net_carry_daily:.4f} ETH")
+    with decomp_col5:
+        st.metric("Basis Spread", f"{decomp.basis_spread*100:.2f}%",
+                  help="Staking APY minus borrow APY")
+    with decomp_col6:
+        st.metric("Break-even Peg Drop", f"{decomp.break_even_peg_drop*100:.2f}%",
+                  help="Maximum annual peg drop before net carry turns negative")

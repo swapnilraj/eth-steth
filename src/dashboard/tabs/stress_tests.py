@@ -300,3 +300,23 @@ def render_stress_tests(
         pnl_values=corr_pnl,
     )
     st.plotly_chart(fig_scatter, use_container_width=True)
+
+    # --- Model Limitations ---
+    st.divider()
+    st.subheader("Model Limitations")
+    st.warning(
+        "**Important disclaimers about the stress test models:**\n\n"
+        "- **Historical scenarios**: Past events may not be representative of future "
+        "stress events. The magnitude, duration, and correlation structure of future "
+        "crises may differ significantly from historical precedents.\n\n"
+        "- **Static parameters**: Stress tests apply instantaneous shocks and hold "
+        "parameters fixed for the scenario duration. In reality, rates, liquidation "
+        "thresholds, and protocol parameters may change during stress events.\n\n"
+        "- **Correlated shocks**: The Cholesky decomposition assumes a fixed correlation "
+        "matrix derived from historical data. Tail correlations during extreme events "
+        "are typically higher than normal-regime estimates.\n\n"
+        "- **Oracle assumptions**: The model assumes Aave V3 uses a hardcoded 1:1 "
+        "stETH/ETH oracle. Oracle behavior during extreme depeg events may differ.\n\n"
+        "- **This is not financial advice.** These stress tests are for educational and "
+        "research purposes only."
+    )
