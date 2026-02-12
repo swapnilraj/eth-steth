@@ -112,17 +112,30 @@ def main() -> None:
             st.rerun()
 
     # ------------------------------------------------------------------
-    # Staking APY from provider
+    # Staking APY from provider (with direct Lido API fallback)
     # ------------------------------------------------------------------
     live_staking_apy: float | None = None
     try:
         apy = provider.get_staking_apy()
-        # Only surface the live value when it differs from the static default
         if use_onchain or abs(apy - 0.035) > 0.0001:
             live_staking_apy = apy
     except Exception:
-        if use_onchain:
-            st.sidebar.warning("Could not fetch live staking APY — using 3.5% default")
+        pass
+
+    # If the provider returned the static default, try the Lido API directly
+    if use_onchain and (live_staking_apy is None or abs(live_staking_apy - 0.035) < 0.0001):
+        try:
+            import requests as _req
+
+            resp = _req.get(
+                "https://eth-api.lido.fi/v1/protocol/steth/apr/sma",
+                timeout=10,
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+            live_staking_apy = float(resp.json()["data"]["smaApr"]) / 100.0
+        except Exception as exc:
+            st.sidebar.warning(f"Could not fetch live staking APY: {exc}")
 
     # ------------------------------------------------------------------
     # Sidebar controls
