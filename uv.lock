@@ -675,6 +675,7 @@ dependencies = [
     { name = "pandas" },
     { name = "plotly" },
     { name = "streamlit" },
+    { name = "web3" },
 ]
 
 [package.optional-dependencies]
@@ -692,6 +693,7 @@ requires-dist = [
     { name = "plotly", specifier = ">=5.18" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4" },
     { name = "streamlit", specifier = ">=1.30" },
+    { name = "web3", specifier = ">=6.0" },
     { name = "web3", marker = "extra == 'onchain'", specifier = ">=6.0" },
 ]
 provides-extras = ["dev", "onchain"]

@@ -1,20 +1,22 @@
 """wstETH/ETH Risk Dashboard — Main Streamlit entry point."""
 
+import importlib
 import os
+import subprocess
 import sys
 from pathlib import Path
 
-# Ensure web3 is installed.  Streamlit Cloud's venv is read-only and
-# doesn't allow --user installs, so we install to /tmp and prepend it.
+# ---------------------------------------------------------------------------
+# Dependency bootstrap — Streamlit Cloud's read-only venv may not include
+# web3 even when listed in requirements.txt / pyproject.toml.  Install to
+# a writable /tmp directory as a fallback.
+# ---------------------------------------------------------------------------
 _WEB3_LIB = "/tmp/web3_packages"  # noqa: S108
 if os.path.isdir(_WEB3_LIB):
     sys.path.insert(0, _WEB3_LIB)
 try:
     import web3 as _web3_check  # noqa: F401
 except ImportError:
-    import importlib
-    import subprocess
-
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install",
          "--target", _WEB3_LIB, "web3>=6.0"],
@@ -29,7 +31,11 @@ except ImportError:
 
 import streamlit as st
 
-# Load .env file if present (for ETH_RPC_URL, etc.)
+# ---------------------------------------------------------------------------
+# Environment setup
+# ---------------------------------------------------------------------------
+
+# Load .env file if present (local development)
 _env_path = Path(__file__).resolve().parents[2] / ".env"
 if _env_path.exists():
     for line in _env_path.read_text().splitlines():
@@ -38,14 +44,17 @@ if _env_path.exists():
             key, _, value = line.partition("=")
             os.environ.setdefault(key.strip(), value.strip())
 
-# Bridge Streamlit Cloud secrets into os.environ so the rest of the app
-# (provider_factory, sidebar) can read them via os.environ.get().
+# Bridge Streamlit Cloud secrets into os.environ
 try:
     for key in st.secrets:
         if isinstance(st.secrets[key], str):
             os.environ.setdefault(key, st.secrets[key])
 except Exception:
     pass  # No secrets configured
+
+# ---------------------------------------------------------------------------
+# Imports
+# ---------------------------------------------------------------------------
 
 from src.dashboard.components.sidebar import render_sidebar
 from src.dashboard.tabs.liquidation import render_liquidation
@@ -67,110 +76,69 @@ def main() -> None:
     st.title("wstETH/ETH Risk Dashboard")
     st.caption("Aave V3 — Mellow Vault Position Analysis")
 
-    # Pre-create provider so we can fetch live staking APY for the sidebar.
-    # The on-chain toggle uses a stable key so its state persists across reruns.
-    use_onchain = st.sidebar.checkbox("Use On-Chain Data", value=False, key="use_onchain")
+    # ------------------------------------------------------------------
+    # Data source toggle + provider
+    # ------------------------------------------------------------------
+    use_onchain = st.sidebar.checkbox(
+        "Use On-Chain Data", value=False, key="use_onchain",
+    )
     provider = create_provider(use_onchain=use_onchain)
 
-    # Fetch live staking APY from provider
-    live_staking_apy: float | None = None
+    # Connection status
     if use_onchain:
-        try:
-            from src.data.onchain_provider import OnChainDataProvider
+        from src.data.onchain_provider import OnChainDataProvider
 
-            if isinstance(provider, OnChainDataProvider):
-                live_staking_apy = provider.get_staking_apy()
-        except Exception:
-            pass
-    # Always try the Lido API for staking APY even with static provider
-    if live_staking_apy is None:
-        try:
-            live_staking_apy = provider.get_staking_apy()
-            # Only use it if it came from on-chain (not the static 0.035 default)
-            if not use_onchain and abs(live_staking_apy - 0.035) < 0.0001:
-                live_staking_apy = None  # Don't show "from Lido" for static default
-        except Exception:
-            pass
-
-    # Show data source and connection diagnostics
-    if use_onchain:
-        try:
-            from src.data.onchain_provider import OnChainDataProvider
-
-            if isinstance(provider, OnChainDataProvider):
-                if provider.is_connected:
-                    st.sidebar.success("On-chain: connected")
-                    try:
-                        test_peg = provider.get_steth_eth_peg()
-                        st.sidebar.caption(f"Live stETH/ETH peg: {test_peg:.6f}")
-                    except Exception as exc:
-                        st.sidebar.error(f"RPC call failed: {exc}")
-                else:
-                    st.sidebar.error("On-chain: cannot reach RPC endpoint")
+        if isinstance(provider, OnChainDataProvider):
+            if provider.is_connected:
+                st.sidebar.success("On-chain: connected")
+                try:
+                    peg = provider.get_steth_eth_peg()
+                    st.sidebar.caption(f"Live stETH/ETH peg: {peg:.6f}")
+                except Exception as exc:
+                    st.sidebar.error(f"RPC call failed: {exc}")
             else:
-                diag = []
-                rpc_url = os.environ.get("ETH_RPC_URL", "")
-                if not rpc_url:
-                    diag.append("ETH_RPC_URL not found in environment")
-                else:
-                    diag.append(f"ETH_RPC_URL is set ({rpc_url[:20]}...)")
-                try:
-                    import web3  # noqa: F401
-                    diag.append("web3 is installed")
-                except ImportError:
-                    diag.append("web3 is NOT installed")
-                    import subprocess
-                    try:
-                        subprocess.check_output(
-                            [sys.executable, "-m", "pip", "install", "web3>=6.0"],
-                            stderr=subprocess.STDOUT,
-                            timeout=120,
-                        )
-                        diag.append("pip install succeeded — reload the page")
-                    except subprocess.CalledProcessError as pip_err:
-                        diag.append(f"pip install failed:\n{pip_err.output.decode()[-500:]}")
-                    except Exception as pip_exc:
-                        diag.append(f"pip install error: {pip_exc}")
-                try:
-                    from src.data.onchain_provider import OnChainDataProvider as _OCP
-                    if rpc_url:
-                        _OCP(rpc_url=rpc_url)
-                        diag.append("OnChainDataProvider created OK (should not reach here)")
-                except ImportError as e:
-                    diag.append(f"Import error: {e}")
-                except Exception as e:
-                    diag.append(f"Creation error: {e}")
-                st.sidebar.error("Fell back to static data")
-                for d in diag:
-                    st.sidebar.caption(d)
-        except ImportError:
-            st.sidebar.error("Fell back to static data (web3 not available)")
+                st.sidebar.error("On-chain: cannot reach RPC endpoint")
+        else:
+            rpc = os.environ.get("ETH_RPC_URL", "")
+            if not rpc:
+                st.sidebar.warning("ETH_RPC_URL not set — using static data")
+            else:
+                st.sidebar.warning("On-chain provider failed — using static data")
 
-    # Refresh button for on-chain data
+    # Refresh button
     if use_onchain and hasattr(provider, "refresh"):
         if st.sidebar.button("Refresh On-Chain Data"):
             provider.refresh()  # type: ignore[attr-defined]
             st.rerun()
 
-    # Sidebar controls (provider already created, pass live staking APY)
+    # ------------------------------------------------------------------
+    # Staking APY from provider
+    # ------------------------------------------------------------------
+    live_staking_apy: float | None = None
+    try:
+        apy = provider.get_staking_apy()
+        # Only surface the live value when it differs from the static default
+        if use_onchain or abs(apy - 0.035) > 0.0001:
+            live_staking_apy = apy
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------
+    # Sidebar controls
+    # ------------------------------------------------------------------
     params = render_sidebar(live_staking_apy=live_staking_apy)
 
-    # Build position from sidebar params
     position = VaultPosition(
         collateral_amount=params.collateral_amount,
         debt_amount=params.debt_amount,
         emode_enabled=params.emode_enabled,
     )
 
-    # If exchange rate factor is adjusted, scale the wstETH oracle price
-    # proportionally.  This models a Lido slashing event reducing
-    # stEthPerToken.  The oracle price already includes the current rate,
-    # so we scale by (target / current).
+    # Exchange-rate override (models Lido slashing)
     if params.depeg_level < 1.0:
         current_peg = provider.get_steth_eth_peg()
         peg_scale = params.depeg_level / current_peg if current_peg > 0 else params.depeg_level
         original_get_price = provider.get_asset_price
-        original_get_peg = provider.get_steth_eth_peg
 
         def patched_price(asset: str) -> float:
             price = original_get_price(asset)
@@ -184,29 +152,22 @@ def main() -> None:
         provider.get_asset_price = patched_price  # type: ignore[assignment]
         provider.get_steth_eth_peg = patched_peg  # type: ignore[assignment]
 
+    # ------------------------------------------------------------------
     # Tabs
+    # ------------------------------------------------------------------
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        [
-            "Position Overview",
-            "Interest Rates",
-            "Liquidation Analysis",
-            "Simulations",
-            "Stress Tests",
-        ]
+        ["Position Overview", "Interest Rates", "Liquidation Analysis",
+         "Simulations", "Stress Tests"],
     )
 
     with tab1:
         render_overview(position, provider, params.staking_apy)
-
     with tab2:
         render_rates(provider, params.utilization_override)
-
     with tab3:
         render_liquidation(position, provider)
-
     with tab4:
         render_simulations(position, provider, params.staking_apy)
-
     with tab5:
         render_stress_tests(position, provider, params.staking_apy)
 
