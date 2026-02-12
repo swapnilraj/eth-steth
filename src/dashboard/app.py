@@ -65,7 +65,40 @@ def main() -> None:
             else:
                 st.sidebar.error("On-chain: cannot reach RPC endpoint")
         else:
-            st.sidebar.warning("Fell back to static data (check RPC URL / web3)")
+            # Diagnose why factory returned static provider
+            diag = []
+            rpc_url = os.environ.get("ETH_RPC_URL", "")
+            if not rpc_url:
+                diag.append("ETH_RPC_URL not found in environment")
+                # Check if it's in st.secrets directly
+                try:
+                    secret_val = st.secrets.get("ETH_RPC_URL", "")
+                    if secret_val:
+                        diag.append(f"...but IS in st.secrets (bridge failed?)")
+                    else:
+                        diag.append("...also not in st.secrets")
+                except Exception:
+                    diag.append("...st.secrets not available")
+            else:
+                diag.append(f"ETH_RPC_URL is set ({rpc_url[:20]}...)")
+            try:
+                import web3  # noqa: F401
+                diag.append("web3 is installed")
+            except ImportError:
+                diag.append("web3 is NOT installed")
+            # Try creating provider directly to capture the error
+            try:
+                from src.data.onchain_provider import OnChainDataProvider as _OCP
+                if rpc_url:
+                    _OCP(rpc_url=rpc_url)
+                    diag.append("OnChainDataProvider created OK (should not reach here)")
+            except ImportError as e:
+                diag.append(f"Import error: {e}")
+            except Exception as e:
+                diag.append(f"Creation error: {e}")
+            st.sidebar.error("Fell back to static data")
+            for d in diag:
+                st.sidebar.caption(d)
 
     # Refresh button for on-chain data
     if params.use_onchain_data and hasattr(provider, "refresh"):
