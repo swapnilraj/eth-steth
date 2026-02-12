@@ -5,17 +5,23 @@ import sys
 from pathlib import Path
 
 # Ensure web3 is installed (Streamlit Cloud may not pick it up from
-# requirements.txt / pyproject.toml).  This runs once at import time.
+# requirements.txt / pyproject.toml).  The venv is read-only, so we
+# install with --user and add the user site-packages to sys.path.
 try:
     import web3 as _web3_check  # noqa: F401
 except ImportError:
     import importlib
+    import site
     import subprocess
 
     subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "web3>=6.0"],
+        [sys.executable, "-m", "pip", "install", "--user", "web3>=6.0"],
         timeout=300,
     )
+    # Add user site-packages to path if not already present
+    user_site = site.getusersitepackages()
+    if user_site not in sys.path:
+        sys.path.insert(0, user_site)
     # Clear Python's cached failed-import entries so the fresh install is found
     for _mod in list(sys.modules):
         if _mod == "web3" or _mod.startswith("web3."):
