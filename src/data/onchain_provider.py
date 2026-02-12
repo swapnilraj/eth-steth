@@ -319,15 +319,35 @@ class OnChainDataProvider(PoolDataProvider):
 
     def get_staking_apy(self) -> float:
         def _fetch() -> float:
-            import urllib.request
-            import json
+            # Try `requests` first (available on Streamlit Cloud, better SSL
+            # handling), fall back to stdlib urllib.
+            errors: list[str] = []
 
-            url = "https://eth-api.lido.fi/v1/protocol/steth/apr/sma"
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-            # API returns percentage (e.g. 3.5), convert to decimal
-            return float(data["data"]["smaApr"]) / 100.0
+            # Primary: Lido API (7-day SMA)
+            lido_url = "https://eth-api.lido.fi/v1/protocol/steth/apr/sma"
+            try:
+                import requests as _req
+
+                resp = _req.get(lido_url, timeout=10, headers={"Accept": "application/json"})
+                resp.raise_for_status()
+                return float(resp.json()["data"]["smaApr"]) / 100.0
+            except ImportError:
+                # `requests` not available — try urllib
+                try:
+                    import json
+                    import urllib.request
+
+                    req = urllib.request.Request(lido_url, headers={"Accept": "application/json"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+                        data = json.loads(resp.read().decode())
+                    return float(data["data"]["smaApr"]) / 100.0
+                except Exception as exc:
+                    errors.append(f"Lido API (urllib): {exc}")
+            except Exception as exc:
+                errors.append(f"Lido API: {exc}")
+
+            logger.warning("Staking APY fetch failed: %s", "; ".join(errors))
+            raise RuntimeError("; ".join(errors))
 
         fb = self._fallback.get_staking_apy if self._fallback else None
         return self._call_with_fallback("staking_apy", _fetch, fb)

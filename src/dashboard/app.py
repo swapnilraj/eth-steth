@@ -121,7 +121,8 @@ def main() -> None:
         if use_onchain or abs(apy - 0.035) > 0.0001:
             live_staking_apy = apy
     except Exception:
-        pass
+        if use_onchain:
+            st.sidebar.warning("Could not fetch live staking APY — using 3.5% default")
 
     # ------------------------------------------------------------------
     # Sidebar controls
